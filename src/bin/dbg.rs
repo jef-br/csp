@@ -28,6 +28,11 @@ fn main() {
     let mask_path = out.replace(".png", "_mask.png");
     mask.save(&mask_path).unwrap();
     println!("  mask    -> {mask_path}");
+
+    let shadow = detect::debug_shadow(&loaded.rgb);
+    let sh_path = out.replace(".png", "_shadow.png");
+    shadow.save(&sh_path).unwrap();
+    println!("  shadow  -> {sh_path}");
 }
 
 fn draw_rect(img: &mut RgbImage, x: i32, y: i32, w: i32, h: i32, c: Rgb<u8>) {

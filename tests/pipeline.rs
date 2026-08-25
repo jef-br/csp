@@ -101,6 +101,34 @@ fn product_band_is_not_distorted_by_fill() {
     let _ = std::fs::remove_file(&tmp);
 }
 
+#[test]
+fn tall_subject_with_margin_keeps_full_height() {
+    // A tall red bar that does NOT touch the frame edges (has background all around) must keep its
+    // full height and pad to a square — the product is never cropped or distorted.
+    let (w, h) = (400u32, 700u32);
+    let mut img = RgbaImage::from_pixel(w, h, Rgba([250, 250, 250, 255]));
+    let (bx, by, bw, bh) = (160u32, 60u32, 80u32, 580u32);
+    for y in by..by + bh {
+        for x in bx..bx + bw {
+            img.put_pixel(x, y, Rgba([200, 40, 40, 255]));
+        }
+    }
+    let tmp = std::env::temp_dir().join("csp_test_tall.png");
+    img.save(&tmp).unwrap();
+
+    let loaded = load::load_image(&tmp).unwrap();
+    let det = detect::detect(&loaded.rgb, loaded.alpha.as_ref());
+    assert!(
+        (det.box_.h - bh as i32).abs() < 60,
+        "full height should be kept: got {} want ~{}",
+        det.box_.h,
+        bh
+    );
+    let out = reposition(&loaded.rgb, loaded.alpha.as_ref());
+    assert_eq!(out.width(), out.height(), "output must be square");
+    let _ = std::fs::remove_file(&tmp);
+}
+
 fn has_app2_icc(jpeg: &[u8]) -> bool {
     let mut i = 2usize; // skip SOI
     while i + 4 <= jpeg.len() {

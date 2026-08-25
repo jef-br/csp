@@ -25,6 +25,46 @@ pub fn debug_mask(rgb: &RgbImage) -> GrayImage {
     image::imageops::resize(&mask, w, h, image::imageops::FilterType::Nearest)
 }
 
+/// Debug helper: mask of pixels classified as cast shadow (studio pass, upscaled to source size).
+pub fn debug_shadow(rgb: &RgbImage) -> GrayImage {
+    let (w, h) = (rgb.width(), rgb.height());
+    let scale = (ANALYSIS_SIZE as f64 / w.max(h) as f64).min(1.0);
+    let small = imgutil::downscale(rgb, scale);
+    let (sw, sh) = (small.width() as usize, small.height() as usize);
+    let (l, a, b) = imgmath::rgb_to_lab(small.as_raw(), sw, sh);
+    // Texture plane (same recipe as build_foreground_mask).
+    let l_det = clahe::apply(&scale_to_255(&l), CLAHE_CLIP_LIMIT, CLAHE_TILE_SIZE);
+    let blurred = imgmath::box_blur_gaussian(&l_det, TEXTURE_DETAIL_SIGMA);
+    let mut detail = Plane::new(sw, sh);
+    let mut detail_sq = Plane::new(sw, sh);
+    for i in 0..(sw * sh) {
+        let d = l_det.data[i] - blurred.data[i];
+        detail.data[i] = d;
+        detail_sq.data[i] = d * d;
+    }
+    let id = Integral::build(&detail);
+    let idsq = Integral::build(&detail_sq);
+    let mut texture = Plane::new(sw, sh);
+    for y in 0..sh {
+        for x in 0..sw {
+            let m = id.box_mean(x, y, TEXTURE_WINDOW);
+            let ms = idsq.box_mean(x, y, TEXTURE_WINDOW);
+            texture.set(x, y, (ms - m * m).max(0.0).sqrt() as f32);
+        }
+    }
+    let ring = ring_indices(sw, sh);
+    let bg_l = fit_channel_over_ring(&l, &ring, sw, sh).0;
+    let mut out = GrayImage::new(sw as u32, sh as u32);
+    for i in 0..(sw * sh) {
+        let drop = bg_l.data[i] - l.data[i];
+        let abs_chroma = (a.data[i] * a.data[i] + b.data[i] * b.data[i]).sqrt();
+        let is_shadow = drop > SHADOW_DARKEN_MIN && drop < SHADOW_DARKEN_MAX
+            && abs_chroma < SHADOW_MAX_ABS_CHROMA && texture.data[i] < SHADOW_MAX_TEXTURE;
+        out.as_mut()[i] = if is_shadow { 255 } else { 0 };
+    }
+    image::imageops::resize(&out, w, h, image::imageops::FilterType::Nearest)
+}
+
 /// Detect the subject in a full-resolution flattened RGB image (plus optional alpha).
 pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
     let (w, h) = (rgb.width() as i32, rgb.height() as i32);
@@ -54,11 +94,37 @@ pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
         p
     };
 
-    // Detail shot: the product bleeds off the canvas / fills the frame. There's no clean box to
-    // crop to, so take the largest salient square instead.
-    let bleeds = pass.intersects.count() >= BLEED_EDGES || pass.ring_texture > SWEEP_TEXTURE_LIMIT;
-    if bleeds {
-        let sq = saliency::most_salient_square(rgb);
+    // A frame-FILLING detail shot (surface texture runs to the border) has no clean box to crop to,
+    // so take the largest salient square, cropped slightly inward onto the busiest content.
+    if pass.ring_texture > SWEEP_TEXTURE_LIMIT {
+        let sq = saliency::most_salient_square(rgb, SALIENT_ZOOM);
+        return Detection {
+            box_: sq,
+            intersects: pass.intersects,
+            kind: DetectionKind::SalientSquare,
+            confidence: 1.0,
+            hard_shadow_fraction: pass.hard_shadow_fraction,
+        };
+    }
+
+    // A LARGE subject that merely touches edges but still has background around it (a full-body
+    // model) must keep its whole extent — pad to square, never crop content away. Clearing the
+    // edge flags routes it through center-and-stretch (box + margin, background fill).
+    if pass.intersects.count() >= BLEED_EDGES {
+        if let Some(b) = pass.box_small {
+            let box_ = rescale_box(b, pass.scale, w, h);
+            if box_.area() as f64 <= WHOLE_FRAME_FRACTION * (w as f64 * h as f64) {
+                return Detection {
+                    box_,
+                    intersects: EdgeIntersects::default(),
+                    kind: DetectionKind::Subject,
+                    confidence: pass.confidence.clamp(0.1, 1.0),
+                    hard_shadow_fraction: pass.hard_shadow_fraction,
+                };
+            }
+        }
+        // No usable box (or box is the whole frame): fall back to the salient square.
+        let sq = saliency::most_salient_square(rgb, SALIENT_ZOOM);
         return Detection {
             box_: sq,
             intersects: pass.intersects,
@@ -258,6 +324,13 @@ fn build_foreground_mask(
     mask = close(&mask, imageproc::distance_transform::Norm::LInf, kradius(bridge));
     mask = close(&mask, imageproc::distance_transform::Norm::LInf, kradius(bridge));
 
+    // Carve cast shadow back out of the mask so the box bounds the product, not its shadow. No
+    // re-close afterwards: closing would re-bridge the carved shadow and drag the box back out.
+    let bg_l = fit_channel_over_ring(&l, &ring, w, h).0;
+    suppress_shadow(&mut mask, &l, &bg_l, &a, &b, &texture);
+    // A light open removes stray speckle the carve may leave without re-growing the boundary.
+    mask = open(&mask, imageproc::distance_transform::Norm::LInf, 1);
+
     (mask, hard_shadow_fraction, ring_residual, ring_texture_med)
 }
 
@@ -371,6 +444,26 @@ fn canny_enclosed_coarse(small: &RgbImage) -> GrayImage {
         }
     }
     enclosed
+}
+
+// Remove cast-shadow pixels from the mask: darker than the fitted background lightness by a
+// moderate (non-black) amount, near-achromatic, and near-featureless. A black product falls outside
+// the darkening band; a grey knit is saved by its texture; so neither is carved.
+fn suppress_shadow(mask: &mut GrayImage, l: &Plane, bg_l: &Plane, a: &Plane, b: &Plane, texture: &Plane) {
+    for i in 0..mask.as_ref().len() {
+        if mask.as_ref()[i] == 0 {
+            continue;
+        }
+        let drop = bg_l.data[i] - l.data[i];
+        let abs_chroma = (a.data[i] * a.data[i] + b.data[i] * b.data[i]).sqrt();
+        let is_shadow = drop > SHADOW_DARKEN_MIN
+            && drop < SHADOW_DARKEN_MAX
+            && abs_chroma < SHADOW_MAX_ABS_CHROMA
+            && texture.data[i] < SHADOW_MAX_TEXTURE;
+        if is_shadow {
+            mask.as_mut()[i] = 0;
+        }
+    }
 }
 
 // Weak-threshold mask: pixels above a fraction of the strong chroma/texture limits.
