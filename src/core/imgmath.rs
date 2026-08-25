@@ -145,29 +145,87 @@ pub fn gaussian_blur(p: &Plane, sigma: f64) -> Plane {
     out
 }
 
-/// Local-texture plane: std-dev of a high-pass of the lightness, over a box window. High where the
-/// surface carries fine structure (weave, ribbing), near-zero on smooth sweeps and shadows.
-pub fn local_texture(l: &Plane, sigma: f64, window: i32) -> Plane {
-    let blurred = box_blur_gaussian(l, sigma);
-    let (w, h) = (l.w, l.h);
-    let mut detail = Plane::new(w, h);
-    let mut detail_sq = Plane::new(w, h);
-    for i in 0..(w * h) {
-        let d = l.data[i] - blurred.data[i];
-        detail.data[i] = d;
-        detail_sq.data[i] = d * d;
+/// Edge-preserving bilateral filter on a plane: smooths noise while keeping real edges (weights a
+/// neighbour by both spatial closeness and value similarity). Radius in pixels; sigmas in the same
+/// units as the plane values / pixels.
+pub fn bilateral(p: &Plane, spatial_sigma: f64, range_sigma: f64, radius: i32) -> Plane {
+    let (w, h) = (p.w, p.h);
+    // Precompute the spatial kernel.
+    let mut spatial = vec![0.0f64; ((2 * radius + 1) * (2 * radius + 1)) as usize];
+    let k = 2 * radius + 1;
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            let s = (-((dx * dx + dy * dy) as f64) / (2.0 * spatial_sigma * spatial_sigma)).exp();
+            spatial[((dy + radius) * k + (dx + radius)) as usize] = s;
+        }
     }
-    let id = Integral::build(&detail);
-    let idsq = Integral::build(&detail_sq);
+    let inv_2r2 = 1.0 / (2.0 * range_sigma * range_sigma);
     let mut out = Plane::new(w, h);
     for y in 0..h {
         for x in 0..w {
-            let m = id.box_mean(x, y, window);
-            let ms = idsq.box_mean(x, y, window);
-            out.set(x, y, (ms - m * m).max(0.0).sqrt() as f32);
+            let center = p.at(x, y) as f64;
+            let mut acc = 0.0f64;
+            let mut wsum = 0.0f64;
+            for dy in -radius..=radius {
+                let ny = y as i32 + dy;
+                if ny < 0 || ny >= h as i32 {
+                    continue;
+                }
+                for dx in -radius..=radius {
+                    let nx = x as i32 + dx;
+                    if nx < 0 || nx >= w as i32 {
+                        continue;
+                    }
+                    let v = p.at(nx as usize, ny as usize) as f64;
+                    let sr = spatial[((dy + radius) * k + (dx + radius)) as usize];
+                    let dv = v - center;
+                    let wgt = sr * (-(dv * dv) * inv_2r2).exp();
+                    acc += wgt * v;
+                    wsum += wgt;
+                }
+            }
+            out.set(x, y, (acc / wsum.max(1e-9)) as f32);
         }
     }
     out
+}
+
+/// Otsu threshold that best splits a plane's values into two clusters. `lo`/`hi` bound the value
+/// range; returns the threshold in that range. Used to separate a bright zone from shadows.
+pub fn otsu(p: &Plane, lo: f32, hi: f32) -> f32 {
+    const BINS: usize = 256;
+    let mut hist = [0u32; BINS];
+    let span = (hi - lo).max(1e-6);
+    for &v in p.data.iter() {
+        let idx = (((v - lo) / span) * (BINS as f32 - 1.0)).round().clamp(0.0, BINS as f32 - 1.0) as usize;
+        hist[idx] += 1;
+    }
+    let total: u32 = hist.iter().sum();
+    if total == 0 {
+        return (lo + hi) * 0.5;
+    }
+    let sum_all: f64 = (0..BINS).map(|i| i as f64 * hist[i] as f64).sum();
+    let (mut w_b, mut sum_b) = (0.0f64, 0.0f64);
+    let (mut best_var, mut best_t) = (-1.0f64, 0usize);
+    for t in 0..BINS {
+        w_b += hist[t] as f64;
+        if w_b == 0.0 {
+            continue;
+        }
+        let w_f = total as f64 - w_b;
+        if w_f == 0.0 {
+            break;
+        }
+        sum_b += t as f64 * hist[t] as f64;
+        let m_b = sum_b / w_b;
+        let m_f = (sum_all - sum_b) / w_f;
+        let between = w_b * w_f * (m_b - m_f) * (m_b - m_f);
+        if between > best_var {
+            best_var = between;
+            best_t = t;
+        }
+    }
+    lo + (best_t as f32 / (BINS as f32 - 1.0)) * span
 }
 
 /// Fast Gaussian approximation: three box-blur passes (Wells' method), O(n) in the image size and

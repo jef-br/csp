@@ -50,10 +50,15 @@ fn main() {
     shadow.save(&sh_path).unwrap();
     println!("  shadow  -> {sh_path}");
 
-    let seg = detect::debug_segment(&loaded.rgb);
+    let seg = detect::debug_segment(&loaded.rgb, false);
     let seg_path = out.replace(".png", "_seg.png");
     seg.save(&seg_path).unwrap();
     println!("  seg     -> {seg_path}");
+
+    let segb = detect::debug_segment(&loaded.rgb, true);
+    let segb_path = out.replace(".png", "_segboost.png");
+    segb.save(&segb_path).unwrap();
+    println!("  segboost-> {segb_path}");
 }
 
 fn draw_rect(img: &mut RgbImage, x: i32, y: i32, w: i32, h: i32, c: Rgb<u8>) {

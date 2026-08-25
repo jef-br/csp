@@ -66,11 +66,12 @@ pub fn debug_shadow(rgb: &RgbImage) -> GrayImage {
 }
 
 /// Debug helper: the superpixel border-connected foreground mask, upscaled to the source size.
-pub fn debug_segment(rgb: &RgbImage) -> GrayImage {
+/// `boost` applies the low-contrast zone-stretch first (the fallback path).
+pub fn debug_segment(rgb: &RgbImage, boost: bool) -> GrayImage {
     let (w, h) = (rgb.width(), rgb.height());
     let scale = (SEG_SIZE as f64 / w.max(h) as f64).min(1.0);
     let small = imgutil::downscale(rgb, scale);
-    let mask = super::segment::foreground_mask(&small);
+    let mask = super::segment::foreground_mask(&small, boost);
     image::imageops::resize(&mask, w, h, image::imageops::FilterType::Nearest)
 }
 
@@ -88,9 +89,21 @@ pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
     let scale = (SEG_SIZE as f64 / w.max(h) as f64).min(1.0);
     let small = imgutil::downscale(rgb, scale);
     let (sw, sh) = (small.width() as usize, small.height() as usize);
-    let mask = super::segment::foreground_mask(&small);
+    let mut mask = super::segment::foreground_mask(&small, false);
 
-    let box_small = significant_components_box(&mask, MIN_COMPONENT_AREA_RATIO);
+    // Low-contrast fallback: when the normal pass finds no usable foreground, retry on a lightness
+    // copy whose bright zone has been contrast-stretched (white-on-white rescue). Only the failing
+    // frames reach this — the well-behaved majority never touch the enhancement.
+    let mut box_small = significant_components_box(&mask, MIN_COMPONENT_AREA_RATIO);
+    if is_miss(&box_small, &mask) {
+        let boosted = super::segment::foreground_mask(&small, true);
+        let boosted_box = significant_components_box(&boosted, MIN_COMPONENT_AREA_RATIO);
+        if !is_miss(&boosted_box, &boosted) {
+            mask = boosted;
+            box_small = boosted_box;
+        }
+    }
+
     let intersects = edge_intersects(&mask);
     let fg_fraction = count_nonzero(&mask) as f64 / (sw * sh) as f64;
     let ring_texture = ring_texture_of(&small);
@@ -119,6 +132,17 @@ pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
     let intersects = if intersects.count() >= BLEED_EDGES { EdgeIntersects::default() } else { intersects };
 
     Detection { box_, intersects, kind: DetectionKind::Subject, confidence, hard_shadow_fraction: shadow }
+}
+
+// A miss: no significant component, or the box covers essentially the whole frame.
+fn is_miss(box_small: &Option<Box>, mask: &GrayImage) -> bool {
+    match box_small {
+        None => true,
+        Some(b) => {
+            let (mw, mh) = (mask.width() as f64, mask.height() as f64);
+            b.area() as f64 >= WHOLE_FRAME_FRACTION * mw * mh
+        }
+    }
 }
 
 // Count of foreground pixels in a 0/255 mask.
