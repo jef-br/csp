@@ -37,12 +37,9 @@ pub fn plan(det: &Detection, img_w: i32, img_h: i32) -> Layout {
 
 // No edge intersect: crop box+margin to a square using real pixels, background fills the rest.
 fn center_and_stretch(det: &Detection, img_w: i32, img_h: i32) -> Layout {
-    let mut box_ = det.box_;
-    // Trim a hard shadow off the box bottom before centering.
-    if det.hard_shadow_fraction >= HARD_SHADOW_EVIDENCE_FRACTION {
-        let shrink = (box_.h as f64 * SHADOW_BOTTOM_SHRINK_FRACTION).round() as i32;
-        box_.h = (box_.h - shrink).max(1);
-    }
+    // Shadow is excluded from the box at detection time (see detect::suppress_shadow), so no
+    // blind post-hoc box shrink here — that used to eat real product on low-contrast subjects.
+    let box_ = det.box_;
     let margin = ((box_.longest_side() as f64) * MARGIN_FRACTION).round() as i32;
     let (crop, side) = compute_square_crop(img_w, img_h, box_, margin);
 

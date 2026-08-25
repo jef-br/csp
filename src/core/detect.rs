@@ -16,6 +16,15 @@ use image::{GrayImage, Luma, RgbImage};
 use imageproc::morphology::{close, open};
 use imageproc::region_labelling::{connected_components, Connectivity};
 
+/// Debug helper: return the studio-pass foreground mask upscaled to the source size.
+pub fn debug_mask(rgb: &RgbImage) -> GrayImage {
+    let (w, h) = (rgb.width(), rgb.height());
+    let scale = (ANALYSIS_SIZE as f64 / w.max(h) as f64).min(1.0);
+    let small = imgutil::downscale(rgb, scale);
+    let (mask, _, _, _) = build_foreground_mask(&small, true, SWEEP_SPECKLE_KERNEL);
+    image::imageops::resize(&mask, w, h, image::imageops::FilterType::Nearest)
+}
+
 /// Detect the subject in a full-resolution flattened RGB image (plus optional alpha).
 pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
     let (w, h) = (rgb.width() as i32, rgb.height() as i32);
@@ -230,6 +239,12 @@ fn build_foreground_mask(
         };
     }
 
+    // Hysteresis: grow the strong mask along connected weaker-but-real pixels. This recovers thin,
+    // low-contrast appendages (a bag strap, a hanger) that sit above the hard threshold's floor but
+    // are continuously connected to the confidently-detected product.
+    let weak = weak_mask(&chroma_dist, &texture, chroma_limit, texture_limit, w, h);
+    hysteresis_grow(&mut mask, &weak);
+
     // Canny border flood-fill corroboration: only extend regions the chroma/texture already flagged.
     let enclosed = canny_enclosed_region(small);
     corroborate(&mut mask, &enclosed);
@@ -358,6 +373,59 @@ fn canny_enclosed_coarse(small: &RgbImage) -> GrayImage {
     enclosed
 }
 
+// Weak-threshold mask: pixels above a fraction of the strong chroma/texture limits.
+fn weak_mask(chroma_dist: &Plane, texture: &Plane, chroma_limit: f64, texture_limit: f64, w: usize, h: usize) -> GrayImage {
+    let cw = chroma_limit * HYSTERESIS_WEAK_FRACTION;
+    let tw = texture_limit * HYSTERESIS_WEAK_FRACTION;
+    let mut weak = GrayImage::new(w as u32, h as u32);
+    for i in 0..(w * h) {
+        let hit = chroma_dist.data[i] as f64 > cw || texture.data[i] as f64 > tw;
+        weak.as_mut()[i] = if hit { 255 } else { 0 };
+    }
+    weak
+}
+
+// Absorb a weak component only when it is seeded by the strong mask AND does not balloon far
+// beyond that seed — the flood guard keeps a faint appendage while rejecting a background flood.
+fn hysteresis_grow(mask: &mut GrayImage, weak: &GrayImage) {
+    let labels = connected_components(weak, Connectivity::Eight, Luma([0u8]));
+    let (w, h) = (labels.width(), labels.height());
+
+    let mut total_area: std::collections::HashMap<u32, i64> = std::collections::HashMap::new();
+    let mut seed_area: std::collections::HashMap<u32, i64> = std::collections::HashMap::new();
+    for y in 0..h {
+        for x in 0..w {
+            let lbl = labels.get_pixel(x, y)[0];
+            if lbl == 0 {
+                continue;
+            }
+            *total_area.entry(lbl).or_insert(0) += 1;
+            if mask.get_pixel(x, y)[0] > 0 {
+                *seed_area.entry(lbl).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut absorb = std::collections::HashSet::new();
+    for (&lbl, &seed) in &seed_area {
+        let total = total_area[&lbl] as f64;
+        // Extra (non-seed) area this component would add, relative to its seed.
+        let extra = total - seed as f64;
+        if extra <= HYSTERESIS_FLOOD_CAP * seed as f64 {
+            absorb.insert(lbl);
+        }
+    }
+
+    for y in 0..h {
+        for x in 0..w {
+            let lbl = labels.get_pixel(x, y)[0];
+            if lbl != 0 && absorb.contains(&lbl) {
+                mask.put_pixel(x, y, Luma([255]));
+            }
+        }
+    }
+}
+
 // Fold in enclosed components that touch an already-flagged pixel.
 fn corroborate(mask: &mut GrayImage, enclosed: &GrayImage) {
     let labels = connected_components(enclosed, Connectivity::Eight, Luma([0u8]));
@@ -406,25 +474,57 @@ fn significant_components_box(mask: &GrayImage, min_component_ratio: f64) -> Opt
     if areas.is_empty() {
         return None;
     }
-    let largest = *areas.values().max().unwrap() as f64;
-    let threshold = (MIN_COMPONENT_AREA_FRACTION * (w * h) as f64)
-        .max(min_component_ratio * largest)
-        .max(MIN_COMPONENT_AREA_PIXELS);
+    let largest_area = *areas.values().max().unwrap() as f64;
 
-    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
-    let mut any = false;
-    for (lbl, &area) in &areas {
-        if area as f64 >= threshold {
-            let &(bx0, by0, bx1, by1) = &bounds[lbl];
-            x0 = x0.min(bx0);
-            y0 = y0.min(by0);
-            x1 = x1.max(bx1);
-            y1 = y1.max(by1);
-            any = true;
+    // Keep the main mass (>= ratio of the largest) plus any component big enough on its own
+    // (absolute + fraction floors). This admits thin appendages — a bag strap, a hanger — that
+    // fall under the ratio but are real product, while dropping speckle.
+    let main_threshold = min_component_ratio * largest_area;
+    let keep_floor = (MIN_COMPONENT_AREA_FRACTION * (w * h) as f64).max(MIN_COMPONENT_AREA_PIXELS);
+
+    let mut main: Vec<u32> = Vec::new();
+    let mut candidates: Vec<u32> = Vec::new();
+    for (&lbl, &area) in &areas {
+        let a = area as f64;
+        if a >= main_threshold {
+            main.push(lbl);
+        } else if a >= keep_floor {
+            candidates.push(lbl);
         }
     }
-    if !any {
+    if main.is_empty() {
         return None;
+    }
+
+    // Seed the union with the main components, then absorb nearby candidates (strap etc.) whose
+    // bbox sits within a small gap of the growing union. Iterate to a fixed point.
+    let gap = (0.03 * w.min(h) as f64) as i32;
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for lbl in &main {
+        let &(bx0, by0, bx1, by1) = &bounds[lbl];
+        x0 = x0.min(bx0);
+        y0 = y0.min(by0);
+        x1 = x1.max(bx1);
+        y1 = y1.max(by1);
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        candidates.retain(|lbl| {
+            let &(bx0, by0, bx1, by1) = &bounds[lbl];
+            let near_x = bx0 <= x1 + gap && bx1 >= x0 - gap;
+            let near_y = by0 <= y1 + gap && by1 >= y0 - gap;
+            if near_x && near_y {
+                x0 = x0.min(bx0);
+                y0 = y0.min(by0);
+                x1 = x1.max(bx1);
+                y1 = y1.max(by1);
+                changed = true;
+                false // absorbed; drop from candidates
+            } else {
+                true
+            }
+        });
     }
     Some(Box::new(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
 }
