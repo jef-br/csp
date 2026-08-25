@@ -3,8 +3,9 @@
 //! When the normal segmentation misses, boost a copy of the lightness so a faint product silhouette
 //! becomes a real colour step: bilateral-denoise, split the bright zone from shadows (Otsu), measure
 //! the zone's own tonal statistics, stretch that narrow band to full range within the zone only, and
-//! feather it back so no artificial seam appears. Measuring μ/σ on the bright zone alone (not the
-//! whole frame) keeps σ tight even when the image also contains dark shadows — that tightness is what
+//! feather it back so no artificial seam appears. Measuring μ (mu/mean) / σ (sigma/std-dev) on the
+//! bright zone alone (not the whole frame) keeps σ (std-dev) tight even when the image also contains
+//! dark shadows — that tightness is what
 //! makes the stretch aggressive enough to separate white-on-white.
 
 use super::config::*;
@@ -45,7 +46,7 @@ pub fn low_contrast_boost(l: &Plane) -> Plane {
     let sigma = var.sqrt().max(1e-3);
 
     // 4. Endpoints: a couple of standard deviations either side of the zone mean. The stretch
-    //    aggression auto-scales as 1/σ, so a tight (white-on-white) band is amplified hard while a
+    //    aggression auto-scales as 1/σ (std-dev), so a tight (white-on-white) band is amplified hard while a
     //    wide band is barely touched.
     let black = (mu - LC_SIGMA_K * sigma) as f32;
     let white = (mu + LC_SIGMA_K * sigma) as f32;
