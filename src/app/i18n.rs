@@ -24,33 +24,51 @@ impl Lang {
     }
 }
 
-/// Prompt shown when the input folder was just created / is empty.
-pub fn drop_images_prompt(lang: Lang, folder: &str) -> String {
-    let body = match lang {
-        Lang::En => "Drop your images into the \"{}\" folder on your desktop, then start this app again.",
-        Lang::Es => "Coloca tus imágenes en la carpeta \"{}\" del escritorio y vuelve a iniciar esta aplicación.",
-        Lang::Fr => "Placez vos images dans le dossier « {} » du bureau, puis relancez cette application.",
-        Lang::Nl => "Zet je afbeeldingen in de map \"{}\" op je bureaublad en start deze app opnieuw.",
-        Lang::It => "Inserisci le tue immagini nella cartella \"{}\" sul desktop, poi riavvia questa app.",
-        Lang::De => "Lege deine Bilder in den Ordner \"{}\" auf dem Desktop und starte diese App erneut.",
-    };
-    body.replacen("{}", folder, 1)
-}
-
-/// Completion alert. `seconds` is already rounded to hundredths.
-pub fn batch_finished(lang: Lang, seconds: f64, ok: usize, failed: usize) -> String {
-    let s = format!("{seconds:.2}");
+/// Shown when the input folder was just created or is empty. The folder path is printed separately.
+pub fn drop_prompt(lang: Lang) -> &'static str {
     match lang {
-        Lang::En => format!("Batch finished in {s}s. {ok} processed, {failed} skipped."),
-        Lang::Es => format!("Lote terminado en {s}s. {ok} procesadas, {failed} omitidas."),
-        Lang::Fr => format!("Traitement terminé en {s}s. {ok} traitées, {failed} ignorées."),
-        Lang::Nl => format!("Batch klaar in {s}s. {ok} verwerkt, {failed} overgeslagen."),
-        Lang::It => format!("Lotto completato in {s}s. {ok} elaborate, {failed} saltate."),
-        Lang::De => format!("Stapel in {s}s fertig. {ok} verarbeitet, {failed} übersprungen."),
+        Lang::En => "Your input folder is ready. Drop your images into the folder below, then double-click csp.exe again.",
+        Lang::Es => "Tu carpeta de entrada está lista. Coloca tus imágenes en la carpeta de abajo y vuelve a hacer doble clic en csp.exe.",
+        Lang::Fr => "Votre dossier d'entrée est prêt. Placez vos images dans le dossier ci-dessous, puis double-cliquez à nouveau sur csp.exe.",
+        Lang::Nl => "Je invoermap is klaar. Zet je afbeeldingen in de map hieronder en dubbelklik opnieuw op csp.exe.",
+        Lang::It => "La tua cartella di input è pronta. Inserisci le immagini nella cartella qui sotto, poi fai di nuovo doppio clic su csp.exe.",
+        Lang::De => "Dein Eingabeordner ist bereit. Lege deine Bilder in den Ordner unten und doppelklicke csp.exe erneut.",
     }
 }
 
-/// Short window title for the alerts.
-pub fn app_title() -> &'static str {
-    "Image Batch"
+/// Printed just before processing begins.
+pub fn processing(lang: Lang) -> &'static str {
+    match lang {
+        Lang::En => "Processing your images...",
+        Lang::Es => "Procesando tus imágenes...",
+        Lang::Fr => "Traitement de vos images...",
+        Lang::Nl => "Je afbeeldingen worden verwerkt...",
+        Lang::It => "Elaborazione delle tue immagini...",
+        Lang::De => "Deine Bilder werden verarbeitet...",
+    }
+}
+
+/// Completion summary. `seconds` is already rounded to hundredths.
+pub fn finished(lang: Lang, seconds: f64, ok: usize, failed: usize) -> String {
+    let s = format!("{seconds:.2}");
+    match lang {
+        Lang::En => format!("Batch finished in {s}s. {ok} processed, {failed} skipped. Your results are in the folder below."),
+        Lang::Es => format!("Lote terminado en {s}s. {ok} procesadas, {failed} omitidas. Tus resultados están en la carpeta de abajo."),
+        Lang::Fr => format!("Traitement terminé en {s}s. {ok} traitées, {failed} ignorées. Vos résultats sont dans le dossier ci-dessous."),
+        Lang::Nl => format!("Batch klaar in {s}s. {ok} verwerkt, {failed} overgeslagen. Je resultaten staan in de map hieronder."),
+        Lang::It => format!("Lotto completato in {s}s. {ok} elaborate, {failed} saltate. I risultati sono nella cartella qui sotto."),
+        Lang::De => format!("Stapel in {s}s fertig. {ok} verarbeitet, {failed} übersprungen. Deine Ergebnisse sind im Ordner unten."),
+    }
+}
+
+/// The closing line. Contains a `{}` placeholder where the input-folder path is inserted.
+pub fn close_line(lang: Lang) -> &'static str {
+    match lang {
+        Lang::En => "Press any key to close this window, and double-click csp.exe when your images are ready inside {} for processing.",
+        Lang::Es => "Presiona cualquier tecla para cerrar esta ventana y haz doble clic en csp.exe cuando tus imágenes estén listas dentro de {} para procesarlas.",
+        Lang::Fr => "Appuyez sur une touche pour fermer cette fenêtre, puis double-cliquez sur csp.exe lorsque vos images sont prêtes dans {} pour le traitement.",
+        Lang::Nl => "Druk op een toets om dit venster te sluiten en dubbelklik op csp.exe wanneer je afbeeldingen klaarstaan in {} om te verwerken.",
+        Lang::It => "Premi un tasto per chiudere questa finestra e fai doppio clic su csp.exe quando le tue immagini sono pronte in {} per l'elaborazione.",
+        Lang::De => "Drücke eine beliebige Taste, um dieses Fenster zu schließen, und doppelklicke csp.exe, wenn deine Bilder in {} zur Verarbeitung bereitliegen.",
+    }
 }
