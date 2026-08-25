@@ -19,10 +19,10 @@ rayon = "1"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
     "Win32_Globalization",
     "Win32_System_Com",
+    "Win32_System_Console",
 ] }
 
 # Anti-RE + single-exe hardening. No PDB, no symbols, one codegen unit, abort on panic.

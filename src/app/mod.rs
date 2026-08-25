@@ -4,9 +4,9 @@ pub mod batch;
 pub mod i18n;
 
 #[cfg(windows)]
-mod desktop;
+mod console;
 #[cfg(windows)]
-mod alert;
+mod desktop;
 #[cfg(windows)]
 mod shell;
 
