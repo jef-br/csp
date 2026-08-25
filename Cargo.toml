@@ -1,0 +1,39 @@
+[package]
+name = "csp"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "csp"
+path = "src/main.rs"
+
+[dependencies]
+image = "0.25"
+imageproc = "0.25"
+rustfft = "6"
+jpeg-encoder = "0.6"
+rayon = "1"
+
+# Windows-only host integration (folders, message boxes, UI language).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Globalization",
+    "Win32_System_Com",
+] }
+
+# Anti-RE + single-exe hardening. No PDB, no symbols, one codegen unit, abort on panic.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+overflow-checks = false
+
+[profile.dev]
+opt-level = 1

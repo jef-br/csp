@@ -1,0 +1,87 @@
+//! Compile-time tuning constants.
+//!
+//! Detection constants mirror PRISM `ClassifyConfig.json -> SubjectDetector`; sizing/encoding
+//! constants mirror the reference `process_images.py` defaults. No shadow defaults: every value
+//! that governs behaviour is named here, never buried inline.
+
+// ---- Detection ------------------------------------------------------------------------------
+
+/// Analysis resolution cap. Detection runs at this longest-side (downscaled if larger, full if not).
+pub const ANALYSIS_SIZE: u32 = 1024;
+/// Escalation resolution for non-flat / real-life backgrounds.
+pub const REALLIFE_ANALYSIS_SIZE: u32 = 1536;
+/// Border-ring chroma residual above which we escalate to the real-life pass.
+pub const REALLIFE_RESIDUAL_THRESHOLD: f64 = 3.5;
+
+/// Local-texture window (box filter side) used for the std-dev texture signal.
+pub const TEXTURE_WINDOW: i32 = 14;
+/// High-pass sigma: anything blurrier than this is not surface texture (shadow penumbra).
+pub const TEXTURE_DETAIL_SIGMA: f64 = 4.0;
+/// Robust-spread multiples above background that count as product.
+pub const OUTLIER_SPREAD_MULTIPLIER: f64 = 4.0;
+
+/// Min blob size as a fraction of image area.
+pub const MIN_COMPONENT_AREA_FRACTION: f64 = 0.0005;
+/// Min blob size as a fraction of the largest blob (studio pass).
+pub const MIN_COMPONENT_AREA_RATIO: f64 = 0.05;
+/// Min blob size as a fraction of the largest blob (real-life escalation pass, stricter).
+pub const REALLIFE_MIN_COMPONENT_AREA_RATIO: f64 = 0.12;
+/// Min blob size as an absolute pixel floor.
+pub const MIN_COMPONENT_AREA_PIXELS: f64 = 25.0;
+
+/// A box covering this much of the frame counts as "no detection".
+pub const WHOLE_FRAME_FRACTION: f64 = 0.985;
+/// Opening size (px) that strips a hard shadow's thin edge from texture-only pixels.
+pub const SHADOW_EDGE_KERNEL: i32 = 15;
+/// Fraction of texture-only pixels stripped as shadow edge, above which shadow is "present".
+pub const HARD_SHADOW_EVIDENCE_FRACTION: f64 = 0.05;
+
+/// Auto-Canny threshold width around the median gradient.
+pub const CANNY_SIGMA: f64 = 0.33;
+/// Gap-closing size for the Canny edge map before border flood-fill.
+pub const CANNY_CLOSE_KERNEL: i32 = 5;
+/// Border-ring width as a fraction of each dimension (background sample + edge test).
+pub const BORDER_RING_FRACTION: f64 = 0.02;
+/// Studio-sweep speckle open kernel (0 = skip, used when background is flat).
+pub const SWEEP_SPECKLE_KERNEL: i32 = 7;
+
+/// Chroma-distance floor (Lab units) that counts as product.
+pub const CHROMA_FLOOR: f64 = 2.0;
+/// Local-contrast floor that counts as product surface.
+pub const TEXTURE_FLOOR: f64 = 2.0;
+
+/// CLAHE clip limit + tile size for the detection lightness channel.
+pub const CLAHE_CLIP_LIMIT: f64 = 2.0;
+pub const CLAHE_TILE_SIZE: u32 = 16;
+
+/// Fraction of an outermost mask row/col that must be product to count as an edge contact.
+pub const BLEED_CONTACT: f64 = 0.2;
+/// Canvas edges the subject may run off before the frame is treated as a detail shot.
+pub const BLEED_EDGES: u32 = 2;
+/// Border texture above this means the frame is product-filled (detail shot), not a sweep.
+pub const SWEEP_TEXTURE_LIMIT: f64 = 2.0;
+
+/// Minimum confidence a subject box needs to be trusted for routing.
+pub const SUBJECT_PROMOTION_MIN_CONFIDENCE: f64 = 0.35;
+
+// ---- Geometry / sizing (process_images.py defaults) -----------------------------------------
+
+/// Margin per side, as a fraction of the product's longest edge.
+pub const MARGIN_FRACTION: f64 = 0.042;
+/// Minimum output square side.
+pub const MIN_SIZE: u32 = 800;
+/// Maximum output square side.
+pub const MAX_SIZE: u32 = 2000;
+/// Maximum whole-image upscale factor (background fills any remaining gap).
+pub const MAX_UPSCALE: f64 = 1.42;
+/// Hard-shadow bottom-edge shrink applied to the box before a center-and-stretch.
+pub const SHADOW_BOTTOM_SHRINK_FRACTION: f64 = 0.06;
+/// Radius (fraction of half-width) of the saliency center-prior bias.
+pub const CENTER_PRIOR_FALLOFF: f32 = 0.8;
+/// Below this much background on an axis, pad (replicate) instead of stretching a band.
+pub const LOW_BACKGROUND_FRACTION: f64 = 0.06;
+
+// ---- Encoding -------------------------------------------------------------------------------
+
+/// JPEG quality for the saved output.
+pub const JPEG_QUALITY: u8 = 95;
