@@ -45,6 +45,14 @@ pub const BORDER_RING_FRACTION: f64 = 0.02;
 /// Studio-sweep speckle open kernel (0 = skip, used when background is flat).
 pub const SWEEP_SPECKLE_KERNEL: i32 = 7;
 
+/// Weak-threshold multiplier for hysteresis: a connected pixel above this fraction of the strong
+/// limit is absorbed into the product mask (recovers thin low-contrast appendages).
+pub const HYSTERESIS_WEAK_FRACTION: f64 = 0.7;
+
+/// Flood guard: a weak hysteresis component is absorbed only if its area is at most this multiple
+/// of the strong seed area it touches. A thin strap adds little; a background flood adds a lot.
+pub const HYSTERESIS_FLOOD_CAP: f64 = 0.6;
+
 /// Chroma-distance floor (Lab units) that counts as product.
 pub const CHROMA_FLOOR: f64 = 2.0;
 /// Local-contrast floor that counts as product surface.
