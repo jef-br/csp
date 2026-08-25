@@ -65,6 +65,15 @@ pub fn debug_shadow(rgb: &RgbImage) -> GrayImage {
     image::imageops::resize(&out, w, h, image::imageops::FilterType::Nearest)
 }
 
+/// Debug helper: the superpixel border-connected foreground mask, upscaled to the source size.
+pub fn debug_segment(rgb: &RgbImage) -> GrayImage {
+    let (w, h) = (rgb.width(), rgb.height());
+    let scale = (SEG_SIZE as f64 / w.max(h) as f64).min(1.0);
+    let small = imgutil::downscale(rgb, scale);
+    let mask = super::segment::foreground_mask(&small);
+    image::imageops::resize(&mask, w, h, image::imageops::FilterType::Nearest)
+}
+
 /// Detect the subject in a full-resolution flattened RGB image (plus optional alpha).
 pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
     let (w, h) = (rgb.width() as i32, rgb.height() as i32);
@@ -75,82 +84,72 @@ pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
         }
     }
 
-    // Studio pass at the analysis cap.
-    let scale = (ANALYSIS_SIZE as f64 / w.max(h) as f64).min(1.0);
+    // Border-connected background segmentation at the segmentation resolution.
+    let scale = (SEG_SIZE as f64 / w.max(h) as f64).min(1.0);
     let small = imgutil::downscale(rgb, scale);
-    let pass = run_pass(&small, true, MIN_COMPONENT_AREA_RATIO, SWEEP_SPECKLE_KERNEL);
+    let (sw, sh) = (small.width() as usize, small.height() as usize);
+    let mask = super::segment::foreground_mask(&small);
 
-    // Escalate to a higher-res, stricter pass when the border ring says the background isn't a
-    // flat sweep (real-life background).
-    let pass = if pass.ring_residual > REALLIFE_RESIDUAL_THRESHOLD {
-        let scale2 = (REALLIFE_ANALYSIS_SIZE as f64 / w.max(h) as f64).min(1.0);
-        let small2 = imgutil::downscale(rgb, scale2);
-        let mut p = run_pass(&small2, true, REALLIFE_MIN_COMPONENT_AREA_RATIO, 0);
-        p.scale = scale2;
-        p
-    } else {
-        let mut p = pass;
-        p.scale = scale;
-        p
+    let box_small = significant_components_box(&mask, MIN_COMPONENT_AREA_RATIO);
+    let intersects = edge_intersects(&mask);
+    let fg_fraction = count_nonzero(&mask) as f64 / (sw * sh) as f64;
+    let ring_texture = ring_texture_of(&small);
+    let shadow = 0.0; // geodesic background already excludes cast shadow
+
+    // Frame-FILLING detail shot: the product runs to the border, so the geodesic prior leaves almost
+    // no foreground yet the surface is textured everywhere. Take a salient square, cropped inward.
+    if fg_fraction < SEG_MIN_FG_FRACTION && ring_texture > SWEEP_TEXTURE_LIMIT {
+        let sq = saliency::most_salient_square(rgb, SALIENT_ZOOM);
+        return Detection { box_: sq, intersects, kind: DetectionKind::SalientSquare, confidence: 1.0, hard_shadow_fraction: shadow };
+    }
+
+    let Some(b) = box_small else {
+        return whole_frame(w, h, intersects, shadow, 0.2);
     };
+    let box_ = rescale_box(b, scale, w, h);
+    let confidence = box_coverage(&mask, b).clamp(0.1, 1.0);
 
-    // A frame-FILLING detail shot (surface texture runs to the border) has no clean box to crop to,
-    // so take the largest salient square, cropped slightly inward onto the busiest content.
-    if pass.ring_texture > SWEEP_TEXTURE_LIMIT {
-        let sq = saliency::most_salient_square(rgb, SALIENT_ZOOM);
-        return Detection {
-            box_: sq,
-            intersects: pass.intersects,
-            kind: DetectionKind::SalientSquare,
-            confidence: 1.0,
-            hard_shadow_fraction: pass.hard_shadow_fraction,
-        };
+    if box_.area() as f64 >= WHOLE_FRAME_FRACTION * (w as f64 * h as f64) {
+        return whole_frame(w, h, intersects, shadow, 0.2);
     }
 
-    // A LARGE subject that merely touches edges but still has background around it (a full-body
-    // model) must keep its whole extent — pad to square, never crop content away. Clearing the
-    // edge flags routes it through center-and-stretch (box + margin, background fill).
-    if pass.intersects.count() >= BLEED_EDGES {
-        if let Some(b) = pass.box_small {
-            let box_ = rescale_box(b, pass.scale, w, h);
-            if box_.area() as f64 <= WHOLE_FRAME_FRACTION * (w as f64 * h as f64) {
-                return Detection {
-                    box_,
-                    intersects: EdgeIntersects::default(),
-                    kind: DetectionKind::Subject,
-                    confidence: pass.confidence.clamp(0.1, 1.0),
-                    hard_shadow_fraction: pass.hard_shadow_fraction,
-                };
-            }
-        }
-        // No usable box (or box is the whole frame): fall back to the salient square.
-        let sq = saliency::most_salient_square(rgb, SALIENT_ZOOM);
-        return Detection {
-            box_: sq,
-            intersects: pass.intersects,
-            kind: DetectionKind::SalientSquare,
-            confidence: 1.0,
-            hard_shadow_fraction: pass.hard_shadow_fraction,
-        };
-    }
+    // A large subject that touches several edges but still has background around it (a full-body
+    // model) keeps its whole extent and pads to square — clear the edge flags to route it through
+    // center-and-stretch instead of an edge-anchored crop.
+    let intersects = if intersects.count() >= BLEED_EDGES { EdgeIntersects::default() } else { intersects };
 
-    match pass.box_small {
-        None => whole_frame(w, h, pass.intersects, pass.hard_shadow_fraction, 0.2),
-        Some(b) => {
-            let box_ = rescale_box(b, pass.scale, w, h);
-            if box_.area() as f64 >= WHOLE_FRAME_FRACTION * (w as f64 * h as f64) {
-                whole_frame(w, h, pass.intersects, pass.hard_shadow_fraction, 0.2)
-            } else {
-                Detection {
-                    box_,
-                    intersects: pass.intersects,
-                    kind: DetectionKind::Subject,
-                    confidence: pass.confidence.clamp(0.1, 1.0),
-                    hard_shadow_fraction: pass.hard_shadow_fraction,
-                }
-            }
-        }
+    Detection { box_, intersects, kind: DetectionKind::Subject, confidence, hard_shadow_fraction: shadow }
+}
+
+// Count of foreground pixels in a 0/255 mask.
+fn count_nonzero(mask: &GrayImage) -> usize {
+    mask.as_raw().iter().filter(|&&v| v > 0).count()
+}
+
+// Median local-texture over the border ring at the given resolution — used only to tell a
+// product-filled detail shot from a blank frame when the segmentation leaves little foreground.
+fn ring_texture_of(small: &RgbImage) -> f64 {
+    let (sw, sh) = (small.width() as usize, small.height() as usize);
+    let (l, _a, _b) = imgmath::rgb_to_lab(small.as_raw(), sw, sh);
+    let l255 = scale_to_255(&l);
+    let blurred = imgmath::box_blur_gaussian(&l255, TEXTURE_DETAIL_SIGMA);
+    let mut detail = Plane::new(sw, sh);
+    let mut detail_sq = Plane::new(sw, sh);
+    for i in 0..(sw * sh) {
+        let d = l255.data[i] - blurred.data[i];
+        detail.data[i] = d;
+        detail_sq.data[i] = d * d;
     }
+    let id = Integral::build(&detail);
+    let idsq = Integral::build(&detail_sq);
+    let ring = ring_indices(sw, sh);
+    let vals: Vec<f32> = ring.iter().map(|&i| {
+        let (x, y) = (i % sw, i / sw);
+        let m = id.box_mean(x, y, TEXTURE_WINDOW);
+        let ms = idsq.box_mean(x, y, TEXTURE_WINDOW);
+        (ms - m * m).max(0.0).sqrt() as f32
+    }).collect();
+    imgmath::median(&vals)
 }
 
 fn detect_from_alpha(alpha: &GrayImage, w: i32, h: i32) -> Option<Detection> {

@@ -5,6 +5,22 @@ use image::{Rgb, RgbImage};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap();
+    // Directory mode: emit "path,x,y,w,h,kind" CSV for every image, one pass, no overlays.
+    if std::path::Path::new(&path).is_dir() {
+        for entry in std::fs::read_dir(&path).unwrap().flatten() {
+            let p = entry.path();
+            let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase());
+            if !matches!(ext.as_deref(), Some("jpg" | "jpeg" | "png" | "bmp" | "tif" | "tiff" | "webp")) {
+                continue;
+            }
+            if let Ok(loaded) = load::load_image(&p) {
+                let d = detect::detect(&loaded.rgb, loaded.alpha.as_ref());
+                println!("{}|{}|{}|{}|{}|{:?}", p.display(), d.box_.x, d.box_.y, d.box_.w, d.box_.h, d.kind);
+            }
+        }
+        return;
+    }
+
     let out = std::env::args().nth(2).unwrap_or_else(|| "/tmp/dbg.png".into());
     let loaded = load::load_image(std::path::Path::new(&path)).unwrap();
     let det = detect::detect(&loaded.rgb, loaded.alpha.as_ref());
@@ -33,6 +49,11 @@ fn main() {
     let sh_path = out.replace(".png", "_shadow.png");
     shadow.save(&sh_path).unwrap();
     println!("  shadow  -> {sh_path}");
+
+    let seg = detect::debug_segment(&loaded.rgb);
+    let seg_path = out.replace(".png", "_seg.png");
+    seg.save(&seg_path).unwrap();
+    println!("  seg     -> {seg_path}");
 }
 
 fn draw_rect(img: &mut RgbImage, x: i32, y: i32, w: i32, h: i32, c: Rgb<u8>) {
