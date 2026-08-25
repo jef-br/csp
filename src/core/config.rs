@@ -36,6 +36,22 @@ pub const SHADOW_EDGE_KERNEL: i32 = 15;
 /// Fraction of texture-only pixels stripped as shadow edge, above which shadow is "present".
 pub const HARD_SHADOW_EVIDENCE_FRACTION: f64 = 0.05;
 
+// Shadow suppression: a cast shadow is a low-texture, low-chroma darkening of the background. It is
+// told apart from a dark PRODUCT by the *amount* of darkening — a soft/medium shadow drops Lab L
+// within a band, whereas a black product drops it far past the band. Grey products are saved by
+// their surface texture. Lab L is 0..100.
+/// Minimum Lab-L drop below the fitted background lightness to consider a pixel shadow. Kept above
+/// zero so white-on-white product (drop ~0) is never carved — only darker-than-background pixels.
+pub const SHADOW_DARKEN_MIN: f32 = 4.0;
+/// Maximum Lab-L drop that still reads as shadow; darker than this is treated as product.
+pub const SHADOW_DARKEN_MAX: f32 = 45.0;
+/// A shadow pixel must be near-neutral in ABSOLUTE Lab a/b (sqrt(a²+b²) below this). Absolute
+/// neutrality — not distance from the (possibly tinted) background — is what separates a colourless
+/// cast shadow on a warm sweep from real product colour.
+pub const SHADOW_MAX_ABS_CHROMA: f32 = 6.0;
+/// A shadow pixel must be near-featureless (texture below this).
+pub const SHADOW_MAX_TEXTURE: f32 = 4.0;
+
 /// Auto-Canny threshold width around the median gradient.
 pub const CANNY_SIGMA: f64 = 0.33;
 /// Gap-closing size for the Canny edge map before border flood-fill.
@@ -68,6 +84,9 @@ pub const BLEED_CONTACT: f64 = 0.2;
 pub const BLEED_EDGES: u32 = 2;
 /// Border texture above this means the frame is product-filled (detail shot), not a sweep.
 pub const SWEEP_TEXTURE_LIMIT: f64 = 2.0;
+/// Zoom factor for a frame-filling detail shot: the salient square is this fraction of the shorter
+/// side, cropping slightly inward onto the busiest content instead of taking the whole frame.
+pub const SALIENT_ZOOM: f64 = 0.9;
 
 /// Minimum confidence a subject box needs to be trusted for routing.
 pub const SUBJECT_PROMOTION_MIN_CONFIDENCE: f64 = 0.35;

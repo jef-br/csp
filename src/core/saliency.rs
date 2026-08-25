@@ -10,11 +10,11 @@ use rustfft::{num_complex::Complex, FftPlanner};
 
 const WORKING_SIZE: usize = 192;
 
-/// Largest square fitting inside the frame, placed over the most salient content.
-pub fn most_salient_square(rgb: &RgbImage) -> Box {
+/// Largest square (scaled by `zoom` <= 1) placed over the most salient content.
+pub fn most_salient_square(rgb: &RgbImage, zoom: f64) -> Box {
     let (w, h) = (rgb.width() as i32, rgb.height() as i32);
-    let side = w.min(h);
-    if w == h {
+    let side = ((w.min(h) as f64 * zoom).round() as i32).clamp(1, w.min(h));
+    if w == h && zoom >= 1.0 {
         return Box::new(0, 0, side, side);
     }
 
@@ -36,18 +36,21 @@ pub fn most_salient_square(rgb: &RgbImage) -> Box {
             + integral[y0 * (sw + 1) + x0]
     };
 
-    let horizontal = w > side;
-    let limit = if horizontal { w - side } else { h - side };
-    let step = (limit / 400).max(1);
+    // Search the busier (longer) axis by saliency; center the square on the other axis (which,
+    // once zoomed below the full short side, also has slack).
+    let horizontal = w >= h;
+    let (search_limit, fixed_limit) = if horizontal { (w - side, h - side) } else { (h - side, w - side) };
+    let fixed = (fixed_limit / 2).max(0);
+    let step = (search_limit / 400).max(1);
 
-    let mut offsets: Vec<i32> = (0..=limit).step_by(step as usize).collect();
-    if *offsets.last().unwrap_or(&-1) != limit {
-        offsets.push(limit);
+    let mut offsets: Vec<i32> = (0..=search_limit).step_by(step as usize).collect();
+    if *offsets.last().unwrap_or(&-1) != search_limit {
+        offsets.push(search_limit);
     }
 
     let (mut best_off, mut best_score) = (0i32, -1.0f64);
     for off in offsets {
-        let (x0, y0) = if horizontal { (off as usize, 0) } else { (0, off as usize) };
+        let (x0, y0) = if horizontal { (off as usize, fixed as usize) } else { (fixed as usize, off as usize) };
         let s = win_sum(x0, y0);
         if s > best_score {
             best_score = s;
@@ -56,9 +59,9 @@ pub fn most_salient_square(rgb: &RgbImage) -> Box {
     }
 
     if horizontal {
-        Box::new(best_off, 0, side, side)
+        Box::new(best_off, fixed, side, side)
     } else {
-        Box::new(0, best_off, side, side)
+        Box::new(fixed, best_off, side, side)
     }
 }
 
