@@ -112,6 +112,18 @@ pub const SEG_MIN_FG_FRACTION: f64 = 0.02;
 /// before segmentation — lifts a white-on-white / black-on-black product's silhouette into view.
 pub const LOW_CONTRAST_L_SPREAD: f32 = 30.0;
 
+// ---- Low-contrast fallback (zone stretch) ---------------------------------------------------
+/// Bilateral denoise for the low-contrast rescue: spatial sigma (px), range sigma (Lab L), radius.
+pub const LC_BILATERAL_SPATIAL_SIGMA: f64 = 3.0;
+pub const LC_BILATERAL_RANGE_SIGMA: f64 = 6.0;
+pub const LC_BILATERAL_RADIUS: i32 = 4;
+/// Standard-deviation count for the zone-stretch endpoints (μ ± k·σ). Aggression scales as 1/σ.
+pub const LC_SIGMA_K: f64 = 2.0;
+/// Feather sigma (px) for blending the boosted zone back into the frame.
+pub const LC_FEATHER_SIGMA: f64 = 6.0;
+/// Below this fraction of dark pixels there is no real shadow cluster — the whole frame is the zone.
+pub const LC_DARK_FRACTION_MIN: f64 = 0.08;
+
 // ---- Geometry / sizing (process_images.py defaults) -----------------------------------------
 
 /// Margin per side, as a fraction of the product's longest edge.

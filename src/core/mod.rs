@@ -3,6 +3,7 @@
 pub mod clahe;
 pub mod config;
 pub mod detect;
+pub mod enhance;
 pub mod fill;
 pub mod geometry;
 pub mod icc;
