@@ -12,6 +12,8 @@ pub mod load;
 pub mod resize;
 pub mod saliency;
 pub mod save;
+pub mod segment;
+pub mod superpixel;
 pub mod types;
 
 use image::{GrayImage, RgbImage};

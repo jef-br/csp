@@ -91,6 +91,27 @@ pub const SALIENT_ZOOM: f64 = 0.9;
 /// Minimum confidence a subject box needs to be trusted for routing.
 pub const SUBJECT_PROMOTION_MIN_CONFIDENCE: f64 = 0.35;
 
+// ---- Superpixel figure/ground segmentation --------------------------------------------------
+
+/// Working resolution (longest side) for superpixel segmentation.
+pub const SEG_SIZE: u32 = 480;
+/// Target number of superpixels.
+pub const SEG_K: usize = 700;
+/// SLIC compactness (higher = more square/regular superpixels).
+pub const SEG_COMPACT: f32 = 14.0;
+/// SLIC iterations.
+pub const SEG_ITERS: usize = 8;
+/// Colour step (Lab) below which movement between adjacent superpixels is free (intra-background).
+pub const GEO_CLIP: f32 = 3.0;
+/// Geodesic distance to the border above which a superpixel is foreground.
+pub const GEO_THRESHOLD: f32 = 12.0;
+/// Below this foreground fraction the segmentation is treated as "found nothing"; combined with high
+/// border texture that means a frame-filling detail shot (else a blank frame).
+pub const SEG_MIN_FG_FRACTION: f64 = 0.02;
+/// Lightness spread (Lab L p95−p5) below which the frame is low-contrast and gets a CLAHE rescue
+/// before segmentation — lifts a white-on-white / black-on-black product's silhouette into view.
+pub const LOW_CONTRAST_L_SPREAD: f32 = 30.0;
+
 // ---- Geometry / sizing (process_images.py defaults) -----------------------------------------
 
 /// Margin per side, as a fraction of the product's longest edge.

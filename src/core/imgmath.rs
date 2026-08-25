@@ -145,6 +145,31 @@ pub fn gaussian_blur(p: &Plane, sigma: f64) -> Plane {
     out
 }
 
+/// Local-texture plane: std-dev of a high-pass of the lightness, over a box window. High where the
+/// surface carries fine structure (weave, ribbing), near-zero on smooth sweeps and shadows.
+pub fn local_texture(l: &Plane, sigma: f64, window: i32) -> Plane {
+    let blurred = box_blur_gaussian(l, sigma);
+    let (w, h) = (l.w, l.h);
+    let mut detail = Plane::new(w, h);
+    let mut detail_sq = Plane::new(w, h);
+    for i in 0..(w * h) {
+        let d = l.data[i] - blurred.data[i];
+        detail.data[i] = d;
+        detail_sq.data[i] = d * d;
+    }
+    let id = Integral::build(&detail);
+    let idsq = Integral::build(&detail_sq);
+    let mut out = Plane::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let m = id.box_mean(x, y, window);
+            let ms = idsq.box_mean(x, y, window);
+            out.set(x, y, (ms - m * m).max(0.0).sqrt() as f32);
+        }
+    }
+    out
+}
+
 /// Fast Gaussian approximation: three box-blur passes (Wells' method), O(n) in the image size and
 /// independent of sigma. Good enough for the detector's high-pass; far cheaper than a wide kernel.
 pub fn box_blur_gaussian(p: &Plane, sigma: f64) -> Plane {
