@@ -1,3 +1,8 @@
 /target
 **/*.rs.bk
 Cargo.lock.orig
+
+# Local editor + local-only reference material (not part of the project)
+.vscode/
+MD/
+.serena/
