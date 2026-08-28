@@ -1,0 +1,58 @@
+# Diagrams
+
+WYSIWYG diagrams for CSP, edited as draw.io (diagrams.net) files — free, no account,
+no server.
+
+## One-time setup
+
+VS Code extension recommendation lives in `.vscode/extensions.json` (gitignored like the
+rest of `.vscode/`, so it's local-only — open this folder in VS Code and accept the
+"install recommended extensions" prompt, or install manually: search **Draw.io
+Integration** (`hediet.vscode-drawio`) in the Extensions view.
+
+## Creating a diagram
+
+`Ctrl+Shift+P` → **Draw.io: New Diagram** → save it here as `<name>.drawio.svg` (not
+plain `.drawio`). That extension matters:
+
+- It's a real SVG, so GitHub renders it as an image in the repo view and PR diffs —
+  nothing extra needed on GitHub's side.
+- The full diagram source is embedded in the SVG's own metadata, so reopening the same
+  file in VS Code drops you back into the drag-and-drop editor. One file, no export step.
+
+## Editing
+
+Open the `.drawio.svg` file in VS Code — it opens straight into the draw.io canvas.
+Drag shapes, draw connectors, resize, recolor, same as the web app.
+
+## Grouping — use containers, not just proximity
+
+For things that belong together conceptually, use an actual **container** shape (draw a
+rectangle, tick "Container" in the format panel) rather than just placing shapes near
+each other. Dropping a shape into a container re-parents it in the XML
+(`parent="<container id>"`), so the grouping is explicit in the file, not just implied
+by pixel position. Give the container a title and it reads as a labeled group visually
+too.
+
+## Where this sits relative to the existing Mermaid diagrams
+
+`docs/ARCHITECTURE.md` already carries four Mermaid diagrams (class map, pipeline flow,
+detection internals, geometry routing) with a maintenance rule tying nodes to actual
+files — that stays as-is for now. Mermaid is still the right tool when the diagram is
+simple enough that auto-layout from text is fine and you want it inline with the prose
+it documents.
+
+Reach for a `.drawio.svg` here instead when manual layout actually matters — spatial
+grouping via containers, non-tree layouts, anything fiddly enough that hand-placing
+beats fighting Mermaid's auto-layout. Migrating any of the four existing diagrams to
+draw.io is a separate decision, not done as part of this setup.
+
+## Naming
+
+kebab-case, one diagram per concern, e.g. `pipeline-overview.drawio.svg`.
+
+## Asking Claude to look at a diagram
+
+Point Claude at the file path (or attach it). It reads the embedded XML directly for
+the exact node/edge/container structure, and can render the SVG to a PNG when it needs
+to check the visual layout too — same file, no separate format needed for either side.
