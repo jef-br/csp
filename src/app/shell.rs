@@ -4,8 +4,8 @@ use super::{batch, console, desktop, i18n};
 use std::io::Write;
 use std::path::Path;
 
-const INPUT_FOLDER: &str = "jb-input";
-const OUTPUT_FOLDER: &str = "jb-output";
+const INPUT_FOLDER: &str = "CSP-INPUT";
+const OUTPUT_FOLDER: &str = "CSP-OUTPUT";
 
 pub fn run() {
     console::init();
@@ -43,7 +43,13 @@ fn print_close(lang: i18n::Lang, input: &Path) {
     let _ = std::io::stdout().flush();
 }
 
+// True when `dir` has something for batch::run to process: an image directly inside it, or an
+// image inside one of its direct subfolders (batch recurses exactly one level — see batch.rs).
 fn has_any_image(dir: &Path) -> bool {
+    has_direct_image(dir) || has_subfolder_image(dir)
+}
+
+fn has_direct_image(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
@@ -56,4 +62,13 @@ fn has_any_image(dir: &Path) -> bool {
         }
     }
     false
+}
+
+fn has_subfolder_image(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .any(|e| e.path().is_dir() && has_direct_image(&e.path()))
 }

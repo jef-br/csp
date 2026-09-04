@@ -7,7 +7,7 @@
 //! Foreground = walled off from the border by a strong colour boundary (the product), captured whole
 //! regardless of internal darkness or texture.
 
-use super::config::*;
+use super::super::config::*;
 use super::enhance;
 use super::imgmath;
 use super::superpixel::{self, Superpixels};
@@ -79,7 +79,7 @@ fn adjacency(sp: &Superpixels) -> Vec<Vec<(u32, f32)>> {
     let mut seen: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
     let mut adj: Vec<Vec<(u32, f32)>> = vec![Vec::new(); sp.count];
 
-    let mut add = |x: u32, y: u32, seen: &mut std::collections::HashSet<(u32, u32)>, adj: &mut Vec<Vec<(u32, f32)>>| {
+    let add = |x: u32, y: u32, seen: &mut std::collections::HashSet<(u32, u32)>, adj: &mut Vec<Vec<(u32, f32)>>| {
         let (a, b) = (x.min(y), x.max(y));
         if a == b || !seen.insert((a, b)) {
             return;

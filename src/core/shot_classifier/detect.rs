@@ -7,10 +7,10 @@
 //! higher-resolution pass; a product that bleeds off-canvas falls back to the largest salient
 //! square (see `saliency`).
 
-use super::config::*;
+use super::super::config::*;
+use super::super::types::*;
 use super::imgmath::{self, Integral, Plane};
 use super::saliency;
-use super::types::*;
 use super::{clahe, imgutil};
 use image::{GrayImage, Luma, RgbImage};
 use imageproc::morphology::{close, open};

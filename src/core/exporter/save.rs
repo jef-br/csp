@@ -2,7 +2,7 @@
 
 use super::icc;
 use image::RgbImage;
-use jpeg_encoder::{ColorType, Encoder, SamplingFactor};
+use jpeg_encoder::{ColorType, Density, Encoder, SamplingFactor};
 use std::path::Path;
 
 pub fn save_jpeg_srgb(img: &RgbImage, path: &Path, quality: u8) -> Result<(), String> {
@@ -10,6 +10,7 @@ pub fn save_jpeg_srgb(img: &RgbImage, path: &Path, quality: u8) -> Result<(), St
     {
         let mut encoder = Encoder::new(&mut buf, quality);
         encoder.set_sampling_factor(SamplingFactor::F_1_1); // 4:4:4, no chroma subsampling
+        encoder.set_density(Density::Inch { x: 72, y: 72 });
         encoder
             .add_app_segment(2, &icc_app2_payload())
             .map_err(|e| format!("icc: {e:?}"))?;

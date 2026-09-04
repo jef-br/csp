@@ -2,8 +2,8 @@
 //! rectangle, and a target square side. The routing tree mirrors PRISM's `Tx_DetailCropper` +
 //! `Tx_CenterAndStretch`; the crop-to-real-pixels math mirrors `process_images.py`.
 
-use super::config::*;
-use super::types::*;
+use super::super::config::*;
+use super::super::types::*;
 
 /// A planned layout in the original image's pixel space.
 pub struct Layout {

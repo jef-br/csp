@@ -4,7 +4,7 @@
 //! small square is scaled up toward MIN_SIZE but never by more than MAX_UPSCALE (the fill stage
 //! grows the background enough that MIN_SIZE is reachable within that cap).
 
-use super::config::{MAX_SIZE, MAX_UPSCALE, MIN_SIZE};
+use super::super::config::{MAX_SIZE, MAX_UPSCALE, MIN_SIZE};
 use image::{imageops, RgbImage};
 
 /// The minimum square side the fill stage must reach so a <=MAX_UPSCALE upscale hits MIN_SIZE.
