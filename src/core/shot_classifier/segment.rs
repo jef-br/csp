@@ -35,6 +35,44 @@ pub fn foreground_mask(rgb_small: &RgbImage, enhance: bool) -> GrayImage {
     mask
 }
 
+/// Debug helper: SLIC superpixel boundaries drawn (magenta) over `rgb_small` — the exact same
+/// `superpixel::slic()` call `foreground_mask()` uses, before any geodesic/threshold step runs.
+pub fn debug_slic(rgb_small: &RgbImage) -> RgbImage {
+    let (w, h) = (rgb_small.width() as usize, rgb_small.height() as usize);
+    let (l, a, b) = imgmath::rgb_to_lab(rgb_small.as_raw(), w, h);
+    let sp = superpixel::slic(&l, &a, &b, SEG_K, SEG_COMPACT, SEG_ITERS);
+
+    let mut out = rgb_small.clone();
+    for y in 0..h {
+        for x in 0..w {
+            let here = sp.labels[y * w + x];
+            let boundary = (x + 1 < w && sp.labels[y * w + x + 1] != here)
+                || (y + 1 < h && sp.labels[(y + 1) * w + x] != here);
+            if boundary {
+                out.put_pixel(x as u32, y as u32, image::Rgb([255, 0, 255]));
+            }
+        }
+    }
+    out
+}
+
+/// Debug helper: per-superpixel geodesic distance-to-border (before the `GEO_THRESHOLD` cut that
+/// turns it into `foreground_mask()`'s binary mask), normalised to 0..255 by the frame's own max.
+pub fn debug_geodesic(rgb_small: &RgbImage) -> GrayImage {
+    let (w, h) = (rgb_small.width() as usize, rgb_small.height() as usize);
+    let (l, a, b) = imgmath::rgb_to_lab(rgb_small.as_raw(), w, h);
+    let sp = superpixel::slic(&l, &a, &b, SEG_K, SEG_COMPACT, SEG_ITERS);
+    let geo = geodesic_to_border(&sp);
+    let max = geo.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
+
+    let mut out = GrayImage::new(w as u32, h as u32);
+    for i in 0..(w * h) {
+        let ci = sp.labels[i] as usize;
+        out.as_mut()[i] = ((geo[ci] / max) * 255.0).clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
 // Shortest-path colour distance from any border superpixel to each superpixel.
 fn geodesic_to_border(sp: &Superpixels) -> Vec<f32> {
     let adj = adjacency(sp);
