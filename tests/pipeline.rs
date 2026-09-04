@@ -2,24 +2,39 @@
 //! invariant, ICC embedding, and the alpha fast path.
 
 use csp::core::config::{MAX_SIZE, MIN_SIZE};
+use csp::core::exporter::save;
+use csp::core::preprocessor as load;
+use csp::core::reposition;
+use csp::core::shot_classifier::detect;
 use csp::core::types::DetectionKind;
-use csp::core::{detect, load, reposition, save};
 use image::{Rgba, RgbaImage};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
 }
 
 #[test]
 fn packshot_box_is_not_whole_frame() {
     let loaded = load::load_image(&fixture("packshot_white.jpg")).unwrap();
     let det = detect::detect(&loaded.rgb, loaded.alpha.as_ref());
-    assert!(matches!(det.kind, DetectionKind::Subject), "expected a subject box, got {:?}", det.kind);
+    assert!(
+        matches!(det.kind, DetectionKind::Subject),
+        "expected a subject box, got {:?}",
+        det.kind
+    );
     // The product occupies well under the whole frame.
     let frame = loaded.rgb.width() as i64 * loaded.rgb.height() as i64;
-    assert!(det.box_.area() < frame, "box should be smaller than the frame");
-    assert!(det.box_.w > 10 && det.box_.h > 10, "box should be non-degenerate");
+    assert!(
+        det.box_.area() < frame,
+        "box should be smaller than the frame"
+    );
+    assert!(
+        det.box_.w > 10 && det.box_.h > 10,
+        "box should be non-degenerate"
+    );
 }
 
 #[test]
@@ -44,7 +59,10 @@ fn saved_jpeg_embeds_icc_and_reads_back_square() {
     save::save_jpeg_srgb(&out, &tmp, 95).unwrap();
 
     let bytes = std::fs::read(&tmp).unwrap();
-    assert!(has_app2_icc(&bytes), "output JPEG must carry an APP2 ICC profile");
+    assert!(
+        has_app2_icc(&bytes),
+        "output JPEG must carry an APP2 ICC profile"
+    );
 
     let back = image::open(&tmp).unwrap();
     assert_eq!(back.width(), back.height());
@@ -66,7 +84,10 @@ fn alpha_fast_path_finds_the_opaque_box() {
     img.save(&tmp).unwrap();
 
     let loaded = load::load_image(&tmp).unwrap();
-    assert!(loaded.alpha.is_some(), "loader must surface the alpha channel");
+    assert!(
+        loaded.alpha.is_some(),
+        "loader must surface the alpha channel"
+    );
     let det = detect::detect(&loaded.rgb, loaded.alpha.as_ref());
     // Box should tightly match the opaque region (within a couple of px).
     assert!((det.box_.x - bx as i32).abs() <= 2, "x off: {}", det.box_.x);
@@ -97,7 +118,10 @@ fn product_band_is_not_distorted_by_fill() {
     // Detected aspect ratio should be close to the true 3:4 (0.75), proving the product wasn't
     // stretched during detection/scaling.
     let ar = det.box_.w as f64 / det.box_.h as f64;
-    assert!((ar - 0.75).abs() < 0.2, "product aspect ratio drifted: {ar:.3}");
+    assert!(
+        (ar - 0.75).abs() < 0.2,
+        "product aspect ratio drifted: {ar:.3}"
+    );
     let _ = std::fs::remove_file(&tmp);
 }
 

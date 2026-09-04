@@ -1,9 +1,9 @@
 //! Background fill: grow a crop to a square by stretching only the background bands. The product
 //! band is never scaled. Mirrors the reference nine-slice background stretch (background-only).
 
-use super::config::LOW_BACKGROUND_FRACTION;
+use super::super::config::LOW_BACKGROUND_FRACTION;
+use super::super::types::Box as GBox;
 use super::geometry::Layout;
-use super::types::Box as GBox;
 use image::{imageops, RgbImage};
 
 /// Crop the original per `layout` and return a `side`×`side` square (native product pixels).

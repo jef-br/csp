@@ -34,7 +34,7 @@ fn main() {
         let t_total = Instant::now();
 
         let t0 = Instant::now();
-        let loaded = match core::load::load_image(path) {
+        let loaded = match core::preprocessor::load_image(path) {
             Ok(l) => l,
             Err(e) => {
                 rows.push(format!("{name},,,,,,,,{:.2},error,\"load: {e}\"", t_total.elapsed().as_secs_f64() * 1000.0));
@@ -45,29 +45,29 @@ fn main() {
         let (w, h) = (loaded.rgb.width(), loaded.rgb.height());
 
         let t1 = Instant::now();
-        let det = core::detect::detect(&loaded.rgb, loaded.alpha.as_ref());
+        let det = core::shot_classifier::detect::detect(&loaded.rgb, loaded.alpha.as_ref());
         let detect_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
         let t2 = Instant::now();
-        let mut layout = core::geometry::plan(&det, w as i32, h as i32);
-        let min_fill = core::resize::min_fill_side();
+        let mut layout = core::processor::geometry::plan(&det, w as i32, h as i32);
+        let min_fill = core::processor::resize::min_fill_side();
         if !layout.already_square && layout.side < min_fill {
             layout.side = min_fill;
         }
         let geometry_ms = t2.elapsed().as_secs_f64() * 1000.0;
 
         let t3 = Instant::now();
-        let square = core::fill::render(&loaded.rgb, &layout);
+        let square = core::processor::fill::render(&loaded.rgb, &layout);
         let fill_ms = t3.elapsed().as_secs_f64() * 1000.0;
 
         let t4 = Instant::now();
-        let resized = core::resize::resize_to_spec(&square);
+        let resized = core::processor::resize::resize_to_spec(&square);
         let resize_ms = t4.elapsed().as_secs_f64() * 1000.0;
 
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
         let out_path = output.join(format!("{stem}.jpg"));
         let t5 = Instant::now();
-        let save_result = core::save::save_jpeg_srgb(&resized, &out_path, core::config::JPEG_QUALITY);
+        let save_result = core::exporter::save::save_jpeg_srgb(&resized, &out_path, core::config::JPEG_QUALITY);
         let save_ms = t5.elapsed().as_secs_f64() * 1000.0;
 
         let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;

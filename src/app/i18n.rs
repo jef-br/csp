@@ -64,11 +64,11 @@ pub fn finished(lang: Lang, seconds: f64, ok: usize, failed: usize) -> String {
 /// The closing line. Contains a `{}` placeholder where the input-folder path is inserted.
 pub fn close_line(lang: Lang) -> &'static str {
     match lang {
-        Lang::En => "Press any key to close this window, and double-click csp.exe when your images are ready inside {} for processing.",
-        Lang::Es => "Presiona cualquier tecla para cerrar esta ventana y haz doble clic en csp.exe cuando tus imágenes estén listas dentro de {} para procesarlas.",
-        Lang::Fr => "Appuyez sur une touche pour fermer cette fenêtre, puis double-cliquez sur csp.exe lorsque vos images sont prêtes dans {} pour le traitement.",
-        Lang::Nl => "Druk op een toets om dit venster te sluiten en dubbelklik op csp.exe wanneer je afbeeldingen klaarstaan in {} om te verwerken.",
-        Lang::It => "Premi un tasto per chiudere questa finestra e fai doppio clic su csp.exe quando le tue immagini sono pronte in {} per l'elaborazione.",
-        Lang::De => "Drücke eine beliebige Taste, um dieses Fenster zu schließen, und doppelklicke csp.exe, wenn deine Bilder in {} zur Verarbeitung bereitliegen.",
+        Lang::En => "Press any key to close this window.\nThen double-click csp.exe when your images are ready inside {} for processing.",
+        Lang::Es => "Presiona cualquier tecla para cerrar esta ventana.\nHaz doble clic en csp.exe cuando tus imágenes estén listas dentro de {} para procesarlas.",
+        Lang::Fr => "Appuyez sur une touche pour fermer cette fenêtre.\nPuis double-cliquez sur csp.exe lorsque vos images sont prêtes dans {} pour le traitement.",
+        Lang::Nl => "Druk op een toets om dit venster te sluiten.\nDubbelklik op csp.exe wanneer je afbeeldingen klaarstaan in {} om te verwerken.",
+        Lang::It => "Premi un tasto per chiudere questa finestra.\nFai doppio clic su csp.exe quando le tue immagini sono pronte in {} per l'elaborazione.",
+        Lang::De => "Drücke eine beliebige Taste, um dieses Fenster zu schließen.\nDoppelklicke csp.exe, wenn deine Bilder in {} zur Verarbeitung bereitliegen.",
     }
 }

@@ -1,4 +1,7 @@
-//! Batch processing: enumerate inputs, process each, delete on success, leave failures in place.
+//! Batch processing: enumerate inputs and process each; core's Exporter deletes the source on
+//! success and leaves failures in place. Recurses one level into subfolders of `input` — each
+//! becomes a same-named subfolder of `output` — matching the folder-bootstrap flow in
+//! `docs/diagrams/JB-A2B.drawio.svg`.
 
 use csp::core;
 use rayon::prelude::*;
@@ -22,17 +25,17 @@ pub fn run(input: &Path, output: &Path) -> Summary {
 
     let ok = AtomicUsize::new(0);
     let failed = AtomicUsize::new(0);
-    collect(input).par_iter().for_each(|path| {
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-        let out_path = output.join(format!("{stem}.jpg"));
-        match core::process_file(path, &out_path) {
+    collect(input, output).par_iter().for_each(|(src, dest)| {
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match core::process_file(src, dest) {
             Ok(()) => {
                 ok.fetch_add(1, Ordering::Relaxed);
-                let _ = std::fs::remove_file(path);
             }
             Err(e) => {
                 failed.fetch_add(1, Ordering::Relaxed);
-                eprintln!("failed: {} — {e}", path.display());
+                eprintln!("failed: {} — {e}", src.display());
             }
         }
     });
@@ -44,26 +47,54 @@ pub fn run(input: &Path, output: &Path) -> Summary {
     }
 }
 
-fn collect(input: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
+/// Enumerate (source, destination) pairs. Images directly in `input` land directly in `output`;
+/// images in a direct subfolder of `input` land in a same-named subfolder of `output` — one level
+/// of recursion, no deeper. A subfolder that contains no images gets no output counterpart.
+fn collect(input: &Path, output: &Path) -> Vec<(PathBuf, PathBuf)> {
+    let mut jobs = Vec::new();
     let Ok(entries) = std::fs::read_dir(input) else {
-        return out;
+        return jobs;
     };
+
+    let mut subdirs = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_file() {
-            continue;
+        if path.is_dir() {
+            subdirs.push(path);
+        } else if is_supported(&path) {
+            jobs.push((path.clone(), output.join(dest_name(&path))));
         }
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase());
-        if let Some(ext) = ext {
-            if SUPPORTED.contains(&ext.as_str()) {
-                out.push(path);
+    }
+
+    subdirs.sort();
+    for dir in subdirs {
+        let Some(name) = dir.file_name() else { continue };
+        let Ok(sub_entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in sub_entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && is_supported(&path) {
+                let dest = output.join(name).join(dest_name(&path));
+                jobs.push((path, dest));
             }
         }
     }
-    out.sort();
-    out
+
+    jobs.sort();
+    jobs
+}
+
+fn is_supported(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| SUPPORTED.contains(&e.to_ascii_lowercase().as_str()))
+            .unwrap_or(false)
+}
+
+fn dest_name(path: &Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+    format!("{stem}.jpg")
 }

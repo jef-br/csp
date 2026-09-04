@@ -3,8 +3,8 @@
 //! Used only to place a crop window on a detail shot that bleeds off the canvas — there is no
 //! product outline to crop to, so the biggest square that fits over the busiest content is taken.
 
-use super::config::CENTER_PRIOR_FALLOFF;
-use super::types::Box;
+use super::super::config::CENTER_PRIOR_FALLOFF;
+use super::super::types::Box;
 use image::RgbImage;
 use rustfft::{num_complex::Complex, FftPlanner};
 

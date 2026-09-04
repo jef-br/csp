@@ -1,6 +1,6 @@
 //! Batch product-image repositioner.
 //!
-//! Default (no args): watches the desktop `jb-input` folder, writes to `jb-output`. With two path
+//! Default (no args): watches the desktop `CSP-INPUT` folder, writes to `CSP-OUTPUT`. With two path
 //! args (`<input_dir> <output_dir>`) it runs a plain batch — used for development and testing on
 //! non-Windows hosts.
 

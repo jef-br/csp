@@ -8,7 +8,7 @@
 //! dark shadows — that tightness is what
 //! makes the stretch aggressive enough to separate white-on-white.
 
-use super::config::*;
+use super::super::config::*;
 use super::imgmath::{self, Plane};
 
 /// Return a contrast-boosted copy of the lightness plane (0..100). Chroma is handled by the caller.
