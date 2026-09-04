@@ -75,6 +75,26 @@ pub fn debug_segment(rgb: &RgbImage, boost: bool) -> GrayImage {
     image::imageops::resize(&mask, w, h, image::imageops::FilterType::Nearest)
 }
 
+/// Debug helper: SLIC superpixel boundaries, upscaled to the source size. See
+/// `segment::debug_slic` — the same `superpixel::slic()` call `foreground_mask()` uses.
+pub fn debug_slic(rgb: &RgbImage) -> RgbImage {
+    let (w, h) = (rgb.width(), rgb.height());
+    let scale = (SEG_SIZE as f64 / w.max(h) as f64).min(1.0);
+    let small = imgutil::downscale(rgb, scale);
+    let out = super::segment::debug_slic(&small);
+    image::imageops::resize(&out, w, h, image::imageops::FilterType::Nearest)
+}
+
+/// Debug helper: per-pixel geodesic distance-to-border, upscaled to the source size. See
+/// `segment::debug_geodesic` — the value `foreground_mask()` thresholds against `GEO_THRESHOLD`.
+pub fn debug_geodesic(rgb: &RgbImage) -> GrayImage {
+    let (w, h) = (rgb.width(), rgb.height());
+    let scale = (SEG_SIZE as f64 / w.max(h) as f64).min(1.0);
+    let small = imgutil::downscale(rgb, scale);
+    let out = super::segment::debug_geodesic(&small);
+    image::imageops::resize(&out, w, h, image::imageops::FilterType::Nearest)
+}
+
 /// Detect the subject in a full-resolution flattened RGB image (plus optional alpha).
 pub fn detect(rgb: &RgbImage, alpha: Option<&GrayImage>) -> Detection {
     let (w, h) = (rgb.width() as i32, rgb.height() as i32);
