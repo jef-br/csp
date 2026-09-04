@@ -1,6 +1,7 @@
 // Debug overlay: run detection on an image, print the verdict, and draw the box + margin.
 use csp::core::config::MARGIN_FRACTION;
-use csp::core::{detect, load};
+use csp::core::preprocessor as load;
+use csp::core::shot_classifier::detect;
 use image::{Rgb, RgbImage};
 
 fn main() {
