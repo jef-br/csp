@@ -96,7 +96,7 @@ pub const SUBJECT_PROMOTION_MIN_CONFIDENCE: f64 = 0.35;
 /// Working resolution (longest side) for superpixel segmentation.
 pub const SEG_SIZE: u32 = 480;
 /// Target number of superpixels.
-pub const SEG_K: usize = 700;
+pub const SEG_K: usize = 240;
 /// SLIC compactness (higher = more square/regular superpixels).
 pub const SEG_COMPACT: f32 = 14.0;
 /// SLIC iterations.
