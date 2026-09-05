@@ -92,38 +92,24 @@ pub const SALIENT_ZOOM: f64 = 0.9;
 pub const SUBJECT_PROMOTION_MIN_CONFIDENCE: f64 = 0.35;
 
 // ---- Superpixel figure/ground segmentation --------------------------------------------------
+pub const SEG_SIZE: u32 = 500;                     // Image pyramid size
+pub const SEG_K: usize = 100;                      // Target number of superpixels.
+pub const SEG_COMPACT: f32 = 5.0;                  // SLIC compactness (higher = more square/regular superpixels).
+pub const SEG_ITERS: usize = 4;                    // SLIC iterations (x = full pass over all pixels)
+pub const GEO_CLIP: f32 = 4.0;                     // Max lab difference for "connecting" adjacent superpixels (intra-background)
+pub const GEO_THRESHOLD: f32 = 3.0;                // Geodesic distance to the border above which a superpixel is foreground.
+pub const SEG_MIN_FG_FRACTION: f64 = 0.02;         // Below X → treated as "found nothing". (Combined with high border texture = a frame-filling detail shot (else a blank frame))
 
-/// Working resolution (longest side) for superpixel segmentation.
-pub const SEG_SIZE: u32 = 480;
-/// Target number of superpixels.
-pub const SEG_K: usize = 240;
-/// SLIC compactness (higher = more square/regular superpixels).
-pub const SEG_COMPACT: f32 = 14.0;
-/// SLIC iterations.
-pub const SEG_ITERS: usize = 8;
-/// Colour step (Lab) below which movement between adjacent superpixels is free (intra-background).
-pub const GEO_CLIP: f32 = 3.0;
-/// Geodesic distance to the border above which a superpixel is foreground.
-pub const GEO_THRESHOLD: f32 = 12.0;
-/// Below this foreground fraction the segmentation is treated as "found nothing"; combined with high
-/// border texture that means a frame-filling detail shot (else a blank frame).
-pub const SEG_MIN_FG_FRACTION: f64 = 0.02;
-/// Lightness spread (Lab L p95−p5) below which the frame is low-contrast and gets a CLAHE rescue
-/// before segmentation — lifts a white-on-white / black-on-black product's silhouette into view.
-pub const LOW_CONTRAST_L_SPREAD: f32 = 30.0;
+pub const LOW_CONTRAST_L_SPREAD: f32 = 30.0;       // Lab L spread (p95−p5) below = low-contrast and gets CLAHE rescue before segmentation (rescue low-contrast fg/bg)
 
 // ---- Low-contrast fallback (zone stretch) ---------------------------------------------------
-/// Bilateral denoise for the low-contrast rescue: spatial sigma (px), range sigma (Lab L), radius.
-pub const LC_BILATERAL_SPATIAL_SIGMA: f64 = 3.0;
-pub const LC_BILATERAL_RANGE_SIGMA: f64 = 6.0;
-pub const LC_BILATERAL_RADIUS: i32 = 4;
-/// Standard-deviation count for the zone-stretch endpoints (μ (mu/mean) ± k·σ (sigma/std-dev)).
-/// Aggression scales as 1/σ (std-dev).
-pub const LC_SIGMA_K: f64 = 2.0;
-/// Feather sigma (px) for blending the boosted zone back into the frame.
-pub const LC_FEATHER_SIGMA: f64 = 6.0;
-/// Below this fraction of dark pixels there is no real shadow cluster — the whole frame is the zone.
-pub const LC_DARK_FRACTION_MIN: f64 = 0.08;
+pub const LC_BILATERAL_SPATIAL_SIGMA: f64 = 3.0;   // Spatial sigma (px) radius for denoising pre low-contrast rescue
+pub const LC_BILATERAL_RANGE_SIGMA: f64 = 6.0;     // Color sigma (L distance) for denoising pre low-contrast rescue
+pub const LC_BILATERAL_RADIUS: i32 = 4;            // filter radius (px) for denoising
+pub const LC_SIGMA_K: f64 = 2.0;                   // Low-contrast zone-stretch aggressiveness: 1/σ (std-dev) multiplier for the μ ± k·σ endpoints.
+pub const LC_FEATHER_SIGMA: f64 = 6.0;             // Feather size (px) for blending the boosted zone back into the frame.
+pub const LC_DARK_FRACTION_MIN: f64 = 0.08;        // Below this fraction of dark pixels there is no real shadow. The whole frame is the zone.
+
 
 // ---- Geometry / sizing (process_images.py defaults) -----------------------------------------
 
