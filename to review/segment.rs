@@ -110,22 +110,30 @@ fn geodesic_to_border(sp: &Superpixels) -> Vec<f32> {
     dist
 }
 
-// Region adjacency graph: an undirected edge between neighbouring superpixels, weighted by the
+// Region adjacency graph: an undirected edge between neighbour superpixels, weighted by the
 // colour step between their mean Lab (clipped so movement within a smooth region is nearly free).
 fn adjacency(sp: &Superpixels) -> Vec<Vec<(u32, f32)>> {
     let (w, h) = (sp.w, sp.h);
     let mut seen: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
     let mut adj: Vec<Vec<(u32, f32)>> = vec![Vec::new(); sp.count];
 
-    let add = |x: u32, y: u32, seen: &mut std::collections::HashSet<(u32, u32)>, adj: &mut Vec<Vec<(u32, f32)>>| {
+    let add = |x: u32,
+               y: u32,
+               seen: &mut std::collections::HashSet<(u32, u32)>,
+               adj: &mut Vec<Vec<(u32, f32)>>| {
+
         let (a, b) = (x.min(y), x.max(y));
+
         if a == b || !seen.insert((a, b)) {
             return;
         }
+
         let weight = lab_dist(&sp.mean_lab[a as usize], &sp.mean_lab[b as usize]);
-        let weight = (weight - GEO_CLIP).max(0.0);
+        let weight = (weight - GEO_CLIP).max(0.0);  //GEO_CLIP → read from config.rs
+
         adj[a as usize].push((b, weight));
         adj[b as usize].push((a, weight));
+
     };
 
     for y in 0..h {

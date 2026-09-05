@@ -6,3 +6,4 @@ Cargo.lock.orig
 .vscode/
 MD/
 .serena/
+graphify-out/

@@ -8,7 +8,7 @@ use super::imgmath::Plane;
 const BINS: usize = 256;
 
 /// Apply CLAHE to a plane whose values are in [0,255]. Returns a new equalized plane.
-pub fn apply(src: &Plane, clip_limit: f64, tiles: u32) -> Plane {
+pub fn apply_clahe(src: &Plane, clip_limit: f64, tiles: u32) -> Plane {
     let (w, h) = (src.w, src.h);
     let tiles = tiles.max(1) as usize;
     let tw = (w + tiles - 1) / tiles;

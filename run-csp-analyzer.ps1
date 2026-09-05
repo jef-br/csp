@@ -51,4 +51,4 @@ if ($exitCode -eq 0) {
 } else {
     Write-Host "`ncsp_analyzer exited with code $exitCode"
 }
-Read-Host "Press Enter to close"
+# Read-Host "Press Enter to close"
