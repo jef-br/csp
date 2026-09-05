@@ -33,7 +33,7 @@ pub fn debug_shadow(rgb: &RgbImage) -> GrayImage {
     let (sw, sh) = (small.width() as usize, small.height() as usize);
     let (l, a, b) = imgmath::rgb_to_lab(small.as_raw(), sw, sh);
     // Texture plane (same recipe as build_foreground_mask).
-    let l_det = clahe::apply(&scale_to_255(&l), CLAHE_CLIP_LIMIT, CLAHE_TILE_SIZE);
+    let l_det = clahe::apply_clahe(&scale_to_255(&l), CLAHE_CLIP_LIMIT, CLAHE_TILE_SIZE);
     let blurred = imgmath::box_blur_gaussian(&l_det, TEXTURE_DETAIL_SIGMA);
     let mut detail = Plane::new(sw, sh);
     let mut detail_sq = Plane::new(sw, sh);
@@ -278,7 +278,7 @@ fn build_foreground_mask(
 
     // Texture: high-pass the (optionally CLAHE'd) lightness, then local std-dev via integral image.
     let l_det = if use_clahe {
-        clahe::apply(&scale_to_255(&l), CLAHE_CLIP_LIMIT, CLAHE_TILE_SIZE)
+        clahe::apply_clahe(&scale_to_255(&l), CLAHE_CLIP_LIMIT, CLAHE_TILE_SIZE)
     } else {
         scale_to_255(&l)
     };

@@ -2,14 +2,7 @@
 //! tells a normal subject apart from the frame-filling salient-square fallback — and grows as more
 //! shot types (packshot, detail shot, ghost, flatlay, ...) get their own criteria and routes.
 
-pub mod detect;
+pub mod shotclassifier;
 
-mod clahe;
-mod enhance;
-mod imgmath;
-mod imgutil;
-mod saliency;
-mod segment;
-mod superpixel;
-
-pub use detect::detect as classify;
+// detect.rs and its helpers (clahe, enhance, imgmath, imgutil, saliency, segment, superpixel)
+// moved to `to review/` — unused by the new shotclassifier.rs entry point.
