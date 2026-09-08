@@ -29,7 +29,7 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 | **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + working copy) |
 | **classify** | `core::classify` (private) | `Prepared` → `Option<ShotClassification>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
-| **export** | `core::exporter::export` | `RgbImage` → JPEG on disk, source deleted |
+| **export** | `core::exporter::export` | `RgbImage` → size envelope → JPEG on disk, source deleted |
 
 ### Why two resolutions
 
@@ -127,11 +127,9 @@ spec behaviours it owns in its module docstring.
 
 ## 4. Known gaps
 
-- **The output size envelope is not enforced.** `MIN_SIZE` / `MAX_SIZE` / `resize_to_spec` were
-  retired with the classical detector and have no replacement, so output is currently whatever the
-  route produces. The spec's 800–2000px envelope and the ≤1.42× upscale cap need a home — either in
-  each route or as a step between `dispatch` and `export`.
-- R1 and R2 are stubs, so every classified image comes out unmodified.
+- R1 and R2 are stubs, so a classified image is passed through and only the envelope resizes it.
+- `MAX_UPSCALE` (the 1.42x cap) is not restored: it was honoured by the fill stage growing the
+  canvas before the upscale, and that stage lands with R1.
 - `birefnet` is off by default; without it nothing is classified and every image takes R3.
 
 ---
