@@ -7,3 +7,13 @@ Cargo.lock.orig
 MD/
 .serena/
 graphify-out/
+
+# Model + ONNX Runtime: shipped beside the exe, never in the repo (see docs/ARCHITECTURE.md 5)
+*.onnx
+*.onnx.data
+onnxruntime.dll
+onnxruntime_providers_shared.dll
+
+# Local run output
+/shot-classifier-output
+/test data/OUTPUT

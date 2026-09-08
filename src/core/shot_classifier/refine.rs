@@ -1,6 +1,6 @@
 //! Pass 2: pixel-perfect edge refinement.
 //!
-//! Only call [`refine_edge`] for edges [`crate::gate::gate`] already
+//! Only call [`refine_edge`] for edges [`super::gate::gate`] already
 //! flagged — this does the real work pass 1 exists to avoid paying for
 //! on every instance:
 //!
@@ -20,9 +20,9 @@
 //! 5. The refined mask, not the raw BiRefNet mask, answers touching or
 //!    not touching.
 
-use crate::geometry::{Edge, EdgeView, Grid, Rect};
-use crate::sampling::{sample_background_color, ColorStats};
-use crate::segmentation::{Instance, Mask};
+use super::geometry::{Edge, EdgeView, Grid, Rect};
+use super::sampling::{sample_background_color, ColorStats};
+use super::segmentation::{Instance, Mask};
 use image::{Rgb, RgbImage};
 
 /// Everything pass 2 needs for one instance.

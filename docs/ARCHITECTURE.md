@@ -82,13 +82,14 @@ it — that is expected, not drift.
 The refine params live in `config` next to `WORKING_SIZE` because they are expressed in
 working-resolution pixels — change one and the others shift meaning.
 
-### `shot-classifier` — the classifier crate
+### `core::shot_classifier` — the classifier
 
-A separate workspace member, so it can be exercised without CSP.
+One module per job. `SegmentationModel` keeps the gate/refine logic independent of the ONNX
+binding, so it can be exercised against a stand-in model with the `birefnet` feature off.
 
 | Module | Surface | Job |
 |---|---|---|
-| `lib` | `ShotClassification`, `classify_instance` | runs both passes for one instance |
+| `shot_classifier` | `ShotClassification`, `classify_instance` | runs both passes for one instance |
 | `gate` | `EdgeProximity`, `gate` | pass 1: cheap border-band scan, per edge |
 | `refine` | `RefinementInput`, `RefineParams`, `EdgeRefinement`, `refine_edge` | pass 2: trimap + colour matting at full resolution |
 | `geometry` | `Edge`, `Grid`, `EdgeView`, `Rect` | edge-relative coordinates |
@@ -191,7 +192,7 @@ different rule that happens to share the number 1.42: it caps how far a backgrou
 stretched during fill, and is live design for R1.
 
 **CSP-Analyzer container** — its target, `src/bin/csp_analyzer.rs`, was deleted. Either drop the
-container or re-point it at `shot-classifier/examples/run_dir.rs`, which now fills that role.
+container or re-point it at `examples/run_dir.rs`, which now fills that role.
 
 These edits must be made through the draw.io editor (the VS Code **Draw.io Integration** extension),
 not by hand-editing the embedded XML — the `content` attribute and the rendered SVG have to be

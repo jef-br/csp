@@ -2,7 +2,7 @@
 //!
 //! A bounding box can't answer this reliably — the box can touch an
 //! edge while the actual subject silhouette doesn't (or vice versa for
-//! a diagonal pose). This crate answers it with segmentation instead,
+//! a diagonal pose). This module answers it with segmentation instead,
 //! in two passes:
 //!
 //! - **Pass 1** ([`gate`]): a cheap scan of the segmentation mask's
@@ -18,9 +18,9 @@
 //!   result decides touching or not.
 //!
 //! [`segmentation::SegmentationModel`] abstracts the actual BiRefNet
-//! inference call; wire up CSP's model loader to implement it. Feed its
-//! output, together with the preprocessor's working-resolution image and
-//! the original-resolution image, into [`classify_instance`].
+//! inference call, so the gate/refine logic can be exercised against a
+//! stand-in model. [`super::classify`] wires the real one up and feeds
+//! [`classify_instance`] the preprocessor's two resolutions.
 
 #[cfg(feature = "birefnet")]
 pub mod birefnet;

@@ -33,9 +33,9 @@
 //!   ORT_DYLIB_PATH   ONNX Runtime shared library  (default: ./onnxruntime.dll)
 //!   BIREFNET_ONNX    BiRefNet model               (default: ./birefnet_lite_512.onnx)
 
-use csp_shot_classifier::geometry::Rect;
-use csp_shot_classifier::refine::{RefineParams, RefinementInput};
-use csp_shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, Mask, SegmentationModel};
+use csp::core::shot_classifier::geometry::Rect;
+use csp::core::shot_classifier::refine::{RefineParams, RefinementInput};
+use csp::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, Mask, SegmentationModel};
 use image::{Rgb, RgbImage};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
