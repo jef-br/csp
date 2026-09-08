@@ -13,6 +13,7 @@ use std::path::Path;
 pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
     let prep = preprocessor::prepare(input)?;
     let class = classify(&prep);
+    trace_route(input, &prep, class.as_ref());
     let img = processor::routes::dispatch(&prep, class.as_ref());
     exporter::export(&img, output, input)
 }
@@ -92,4 +93,30 @@ fn sidecar(var: &str, name: &str) -> std::path::PathBuf {
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
         .unwrap_or_else(|| std::path::PathBuf::from(name))
+}
+
+/// Opt-in per-image trace of the routing decision, enabled by setting `CSP_TRACE_ROUTES`.
+///
+/// Off by default so a normal batch stays quiet. It exists because the route distribution is the
+/// number this rebuild is judged on — `docs/CIMINI_FINDINGS.md` recorded 113/116 images collapsing
+/// to "touches no edge" under the old detector — and there is otherwise no way to see it from
+/// outside.
+fn trace_route(input: &Path, prep: &Prepared, class: Option<&ShotClassification>) {
+    if std::env::var_os("CSP_TRACE_ROUTES").is_none() {
+        return;
+    }
+    let route = processor::routes::Route::select(class);
+    let edges = match class {
+        None => "-".to_string(),
+        Some(c) if c.touches_edges.is_empty() => "none".to_string(),
+        Some(c) => c.touches_edges.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>().join("+"),
+    };
+    eprintln!(
+        "route	{route:?}	{edges}	{}x{}	{}x{}	{}",
+        prep.original.width(),
+        prep.original.height(),
+        prep.working.width(),
+        prep.working.height(),
+        input.file_name().unwrap_or_default().to_string_lossy()
+    );
 }
