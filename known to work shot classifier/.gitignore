@@ -1,0 +1,7 @@
+/target
+/shot-classifier-output
+/test data/OUTPUT
+*.onnx
+*.onnx.data
+onnxruntime.dll
+onnxruntime_providers_shared.dll
