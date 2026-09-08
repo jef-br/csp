@@ -9,7 +9,17 @@ name = "csp"
 path = "src/main.rs"
 
 [dependencies]
-image = "0.25"
+# Default-formats pulls in codecs CSP never touches — avif alone drags in the whole rav1e/AV1
+# encoder stack (v_frame, av-scenechange, ...). Only the formats `batch::SUPPORTED` actually
+# accepts as input, plus png for the segmask/test round-trips. Output JPEG goes through
+# `jpeg-encoder` below, not through `image`'s own encoder.
+image = { version = "0.25", default-features = false, features = [
+    "jpeg",
+    "png",
+    "bmp",
+    "tiff",
+    "webp",
+] }
 jpeg-encoder = "0.6"
 rayon = "1"
 tintbox = "0.4.0"
