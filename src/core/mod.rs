@@ -1,7 +1,7 @@
-//! Imaging core: preprocess (load) → export (save). Shot classification and processing
-//! (repositioning the subject onto a square canvas) were parked in `to review/` for a
-//! from-scratch rebuild — see that folder for the prior implementation and `config_full.rs` /
-//! `types.rs` for the constants and geometry types they used.
+//! Imaging core: load → preprocess → classify → dispatch → export.
+//!
+//! Classification and routing are being rebuilt around the BiRefNet shot classifier; until that
+//! lands, this runs load → preprocess → export.
 
 pub mod config;
 pub mod exporter;
@@ -9,8 +9,8 @@ pub mod preprocessor;
 
 use std::path::Path;
 
-/// Full per-file pipeline: load, export (save + delete original).
+/// Full per-file pipeline.
 pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
-    let loaded = preprocessor::load_image(input)?;
-    exporter::export(&loaded.rgb, output, input)
+    let prep = preprocessor::prepare(input)?;
+    exporter::export(&prep.original, output, input)
 }

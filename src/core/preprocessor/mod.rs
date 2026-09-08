@@ -1,19 +1,44 @@
-//! Preprocessor: decode, apply EXIF orientation, extract alpha, composite onto white, convert to
-//! sRGB.
+//! Preprocessor: load, then homogenize.
+//!
+//! **load** — decode, apply EXIF orientation, read the embedded ICC profile.
+//!
+//! **preprocess (homogenize)** — flatten any alpha onto white, colour-manage into sRGB, and produce
+//! the working-resolution copy. Everything downstream sees one shape: opaque sRGB pixels at two
+//! resolutions, no alpha channel and no unknown colour space.
+//!
+//! Both resolutions are kept because the shot classifier needs both: the segmentation model runs on
+//! `working`, and its pass-2 refinement re-decides the boundary against full-resolution pixels in
+//! `original`. Hand it the same image twice and the scale between them collapses to 1.0, which
+//! reduces the refinement to a no-op.
 
-use image::{DynamicImage, GrayImage, ImageReader, RgbImage};
+use super::config::WORKING_SIZE;
+use image::{DynamicImage, ImageReader, RgbImage};
 use std::path::Path;
 use tintbox::format::decode::TYPE_RGB_8;
 use tintbox::profile::{virtuals::build_srgb_profile, ColorSpace, Profile, RenderingIntent};
 use tintbox::transform::Transform;
 
-pub struct Loaded {
-    pub rgb: RgbImage,
-    pub alpha: Option<GrayImage>,
+/// A decoded, correctly-oriented image plus whatever colour profile it declared.
+pub struct Decoded {
+    pub image: DynamicImage,
+    pub icc_profile: Option<Vec<u8>>,
 }
 
-// One pass: decode + apply EXIF orientation + extract alpha + composite onto white + convert to sRGB.
-pub fn load_image(path: &Path) -> Result<Loaded, String> {
+/// The homogenized image, at the two resolutions the pipeline works in.
+pub struct Prepared {
+    /// Full resolution, sRGB, EXIF-applied, alpha flattened onto white.
+    pub original: RgbImage,
+    /// The same image with its longest side reduced to `config::WORKING_SIZE` (never upscaled).
+    pub working: RgbImage,
+}
+
+/// Load and homogenize in one call — what the pipeline uses.
+pub fn prepare(path: &Path) -> Result<Prepared, String> {
+    Ok(preprocess(load(path)?))
+}
+
+/// Decode `path`, apply its EXIF orientation, and keep its ICC profile for the sRGB conversion.
+pub fn load(path: &Path) -> Result<Decoded, String> {
     let reader = ImageReader::open(path)
         .map_err(|e| format!("open: {e}"))?
         .with_guessed_format()
@@ -24,36 +49,61 @@ pub fn load_image(path: &Path) -> Result<Loaded, String> {
         .unwrap_or(image::metadata::Orientation::NoTransforms);
     let icc_profile = image::ImageDecoder::icc_profile(&mut decoder).unwrap_or(None);
 
-    let mut img = DynamicImage::from_decoder(decoder).map_err(|e| format!("decode: {e}"))?;
-    img.apply_orientation(orientation);
+    let mut image = DynamicImage::from_decoder(decoder).map_err(|e| format!("decode: {e}"))?;
+    image.apply_orientation(orientation);
 
-    let has_alpha = img.color().has_alpha();
-    let (mut rgb, alpha) = if has_alpha {
-        let rgba = img.to_rgba8();
-        let (w, h) = (rgba.width(), rgba.height());
-        let mut rgb = RgbImage::new(w, h);
-        let mut alpha = GrayImage::new(w, h);
-        for (dst, a, src) in itertools_zip(&mut rgb, &mut alpha, &rgba) {
-            let af = src[3] as f32 / 255.0;
-            dst[0] = (src[0] as f32 * af + 255.0 * (1.0 - af)).round() as u8;
-            dst[1] = (src[1] as f32 * af + 255.0 * (1.0 - af)).round() as u8;
-            dst[2] = (src[2] as f32 * af + 255.0 * (1.0 - af)).round() as u8;
-            a[0] = src[3];
-        }
-        let carries_transparency = alpha.iter().any(|&v| v < 250);
-        (rgb, if carries_transparency { Some(alpha) } else { None })
-    } else {
-        (img.to_rgb8(), None)
-    };
+    Ok(Decoded { image, icc_profile })
+}
+
+/// Flatten alpha onto white, colour-manage into sRGB, and derive the working-resolution copy.
+pub fn preprocess(decoded: Decoded) -> Prepared {
+    let mut original = flatten_onto_white(&decoded.image);
 
     // A source tagged with a non-sRGB RGB profile gets colour-managed into sRGB here, before any
-    // downstream pixel math (shot classification, background fill) runs on it. An untagged image,
-    // or one already tagged sRGB, is left untouched — same as today.
-    if let Some(icc) = icc_profile.as_deref() {
-        rgb = convert_to_srgb(rgb, icc);
+    // downstream pixel math runs on it. An untagged image, or one already tagged sRGB, is left
+    // untouched.
+    if let Some(icc) = decoded.icc_profile.as_deref() {
+        original = convert_to_srgb(original, icc);
     }
 
-    Ok(Loaded { rgb, alpha })
+    let working = downscale_to_working(&original);
+    Prepared { original, working }
+}
+
+// Composite onto white so transparent pixels become white pixels. The alpha channel is not carried
+// forward — nothing downstream reads it.
+fn flatten_onto_white(img: &DynamicImage) -> RgbImage {
+    if !img.color().has_alpha() {
+        return img.to_rgb8();
+    }
+    let rgba = img.to_rgba8();
+    let mut rgb = RgbImage::new(rgba.width(), rgba.height());
+    for (dst, src) in rgb.pixels_mut().zip(rgba.pixels()) {
+        let a = src[3] as f32 / 255.0;
+        for c in 0..3 {
+            dst[c] = (src[c] as f32 * a + 255.0 * (1.0 - a)).round() as u8;
+        }
+    }
+    rgb
+}
+
+// Reduce the longest side to WORKING_SIZE. An image already at or below that size is copied as-is —
+// upscaling would invent detail the segmentation model would then read as real.
+fn downscale_to_working(original: &RgbImage) -> RgbImage {
+    let (w, h) = (original.width(), original.height());
+    let longest = w.max(h);
+    if longest <= WORKING_SIZE {
+        return original.clone();
+    }
+    let scale = WORKING_SIZE as f64 / longest as f64;
+    let target_w = ((w as f64 * scale).round() as u32).max(1);
+    let target_h = ((h as f64 * scale).round() as u32).max(1);
+    image::imageops::resize(
+        original,
+        target_w,
+        target_h,
+        image::imageops::FilterType::Triangle,
+    )
 }
 
 // Colour-manage `rgb` from its embedded ICC profile into sRGB via tintbox (a pure-Rust,
@@ -86,22 +136,4 @@ fn convert_to_srgb(rgb: RgbImage, icc: &[u8]) -> RgbImage {
     let mut out = vec![0u8; src.len()];
     xform.do_transform(&src, &mut out, n_pixels);
     RgbImage::from_raw(w, h, out).expect("transform preserves buffer size")
-}
-
-// Small local zip over the three buffers to keep the composite loop readable without a dependency.
-fn itertools_zip<'a>(
-    rgb: &'a mut RgbImage,
-    alpha: &'a mut GrayImage,
-    rgba: &'a image::RgbaImage,
-) -> impl Iterator<
-    Item = (
-        &'a mut image::Rgb<u8>,
-        &'a mut image::Luma<u8>,
-        &'a image::Rgba<u8>,
-    ),
-> {
-    rgb.pixels_mut()
-        .zip(alpha.pixels_mut())
-        .zip(rgba.pixels())
-        .map(|((r, a), s)| (r, a, s))
 }
