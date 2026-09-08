@@ -128,13 +128,38 @@ spec behaviours it owns in its module docstring.
 ## 4. Known gaps
 
 - R1 and R2 are stubs, so a classified image is passed through and only the envelope resizes it.
-- `MAX_UPSCALE` (the 1.42x cap) is not restored: it was honoured by the fill stage growing the
-  canvas before the upscale, and that stage lands with R1.
+- **No upscale cap.** `exporter::resize::to_envelope` enlarges anything under `MIN_SIZE` straight
+  to 800px with no limit, so a 300px source is blown up 2.67x. The old pipeline capped this at
+  `MAX_UPSCALE` = 1.42x and had the fill stage grow the canvas to `ceil(MIN_SIZE / MAX_UPSCALE)` =
+  564px first, so the final upscale stayed inside the cap. Neither the constant nor the cap exists
+  in the code today. Restoring the cap alone would mean returning images below `MIN_SIZE`; it needs
+  the fill stage, which lands with R1.
 - `birefnet` is off by default; without it nothing is classified and every image takes R3.
 
 ---
 
-## 5. Diagram drift
+## 5. Single file, no install
+
+**CSP ships as one executable with no installation step. This is a hard requirement.**
+
+It is currently not met. With the `birefnet` feature the exe needs two files beside it, resolved by
+`core::sidecar`: `onnxruntime.dll` (~14MB) and `birefnet_lite_512.onnx` (~179MB, or
+`birefnet_lite_int8.onnx` at ~90MB).
+
+What meeting it takes, in two independent pieces:
+
+1. **The model** — `include_bytes!` it into the binary and load with
+   `Session::builder().commit_from_memory()` instead of `commit_from_file()`. Straightforward.
+2. **ONNX Runtime** — drop `ort`'s `load-dynamic` feature so the runtime is linked at build time
+   rather than opened at startup. On Windows the published ONNX Runtime builds are DLLs, so this
+   means building ONNX Runtime from source with CMake (or vendoring a static library) and pointing
+   `ort-sys` at it. This is the substantial piece.
+
+Expected result: one `.exe` of roughly 110MB using the int8 model, or ~195MB using fp32.
+
+---
+
+## 6. Diagram drift
 
 `docs/diagrams/JBA2B.drawio.svg` is an end-to-end flowchart across four containers: **App**,
 **Core** (Preprocessor → Shot Classifier → Processor → Exporter), and a proposed **CSP-Analyzer**.
