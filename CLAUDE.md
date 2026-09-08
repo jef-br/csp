@@ -11,6 +11,11 @@ Real inference sits behind the `birefnet` feature, off by default. Without it no
 classified and every image takes the R3 fallback route. The `.onnx` model and `onnxruntime.dll`
 are gitignored and live beside the executable, not in the repo.
 
+## Ships as one file, no install
+A hard requirement, currently unmet — the two files above sit beside the exe. Do not quietly
+redesign around the sidecar arrangement; it is a temporary state. `docs/ARCHITECTURE.md` §5 says
+what closing it takes.
+
 ## Diagrams
 * `docs/diagrams/JBA2B.drawio.svg` is the one remaining draw.io diagram — an end-to-end
   App/Core flowchart. Access it via the diagram-sync skill, which explains why you read the
@@ -26,7 +31,7 @@ the node in the same commit. A node with no matching file means the diagram drif
 **Currently suspended.** The four diagrams this rule was written for (`class-map`,
 `pipeline-flow`, `detection-internals`, `geometry-routing`) were deleted with the classical
 detector, and `JBA2B.drawio.svg` has known drift of its own — so for the modules added during
-the classifier rebuild there is no node to patch. `docs/ARCHITECTURE.md` §5 lists the
+the classifier rebuild there is no node to patch. `docs/ARCHITECTURE.md` §6 lists the
 outstanding diagram edits node by node. Un-suspend this rule once those land.
 
 ## Docs
