@@ -16,6 +16,12 @@ image = "0.25"
 jpeg-encoder = "0.6"
 rayon = "1"
 tintbox = "0.4.0"
+csp_shot_classifier = { path = "shot-classifier" }
+
+[features]
+# Real BiRefNet inference. Off by default: without it the classifier produces no verdict and every
+# image takes the R3 fallback route, which is a working pipeline, just an unrouted one.
+birefnet = ["csp_shot_classifier/birefnet"]
 
 # Windows-only host integration (folders, message boxes, UI language).
 [target.'cfg(windows)'.dependencies]

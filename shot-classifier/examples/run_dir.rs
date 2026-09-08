@@ -115,7 +115,13 @@ fn main() {
             }
         };
 
-        let instances = model.segment(&image);
+        let instances = match model.segment(&image) {
+            Ok(instances) => instances,
+            Err(e) => {
+                println!("{file_name:<44}  {:>10}  <segment failed: {e}>", "-");
+                continue;
+            }
+        };
         let inst = &instances[0]; // BiRefNet returns exactly one whole-image instance
 
         let fg = inst.mask.data.iter().filter(|&&v| v > 0).count();
