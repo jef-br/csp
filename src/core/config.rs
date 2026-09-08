@@ -27,3 +27,13 @@ pub const REFINE_SAFETY_PX: u32 = 10;
 /// Pass-2 context grown around the band-intersection region before cropping, so the colour
 /// samplers have enough pixels to work with.
 pub const REFINE_CONTEXT_PX: u32 = 30;
+
+// ---- Output envelope --------------------------------------------------------------------------
+//
+// Applied by the exporter, which every route ends at, so no route can bypass it. The scale is
+// uniform, so a square in stays a square out.
+
+/// Minimum output square side.
+pub const MIN_SIZE: u32 = 800;
+/// Maximum output square side.
+pub const MAX_SIZE: u32 = 2000;
