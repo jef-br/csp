@@ -33,7 +33,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Console",
 ] }
 
-# Anti-RE + single-exe hardening. No PDB, no symbols, one codegen unit, abort on panic.
+# Release hardening. No PDB, no symbols, one codegen unit, abort on panic.
+# Not a single-file build: with the `birefnet` feature the exe needs onnxruntime.dll and the
+# .onnx model beside it (see core::sidecar).
 [profile.release]
 opt-level = 3
 lto = "fat"
