@@ -20,17 +20,17 @@ use super::{Edge, Mask, ShotClassification};
 use image::RgbImage;
 use std::collections::HashSet;
 
-/// A colour must occupy at least this fraction of the background region
-/// (inverse mask) to be reported as BGC.
-const BGC_PRESENCE: f64 = 0.975;
-/// A region smaller than this fraction of the frame is too small to sample a
-/// colour from.
+/// A colour must occupy at least this fraction of the background region (inverse mask) to be reported as BGC.
+const BGC_PRESENCE: f64 = 0.9;
+
+/// A region smaller than this fraction of the frame is too small to sample a colour from.
 const MIN_REGION_FRAC: f64 = 0.01;
+
 /// If the mask covers less than this fraction of the frame *and* no uniform
 /// background was found, `full_bleed` flags the shot as a probable
-/// full-bleed close-up (the subject likely fills the frame). Informational
-/// only — see the module doc for why it must not touch `eix`.
-/// Interim rule — the texture / BG-type pass will replace it.
+/// full-bleed close-up (the subject likely fills the frame).
+/// Informational only — see the module doc for why it must not touch `eix`.
+/// Interim rule — the texture / BG-type pass might further refine it.
 const FULL_BLEED_MAX_FG: f64 = 0.05;
 
 /// EIX string when the classifier produced no verdict at all. Four
@@ -71,8 +71,7 @@ impl ShotCode {
     }
 }
 
-/// Derive the shot code from the working image, its segmentation mask, and
-/// the edge verdict.
+/// Derive the shot code from the working image, its segmentation mask, and the edge verdict.
 pub fn derive(working: &RgbImage, mask: &Mask, class: &ShotClassification) -> ShotCode {
     let ShotColors { bgc, fgc } = shot_colors(working, mask);
 
@@ -103,7 +102,7 @@ struct ShotColors {
 }
 
 /// BGC and FGC, derived from the original image partitioned by the mask
-/// (background = inverse mask, foreground = mask).
+/// (bg = inverse mask, fg = mask).
 fn shot_colors(image: &RgbImage, mask: &Mask) -> ShotColors {
     let (mut fg_hist, mut bg_hist) = (Hist::new(), Hist::new());
     let w = image.width().min(mask.width);
@@ -120,16 +119,16 @@ fn shot_colors(image: &RgbImage, mask: &Mask) -> ShotColors {
     }
     let frame = (w as u64 * h as u64).max(1) as f64;
 
-    // BGC: a single colour must cover >97.5% of the inverse-mask region.
+    // BGC: a single colour must cover most of the inverse-mask region.
     let bgc = (bg_hist.total() as f64 >= frame * MIN_REGION_FRAC)
         .then(|| dominant_cluster(&bg_hist))
         .flatten()
         .filter(|(frac, _)| *frac >= BGC_PRESENCE)
         .map(|(_, c)| hex(c));
 
-    // FGC: the largest colour blob inside the mask -> its weighted-median
-    // colour. "Blob" is the fullest histogram cluster (the winning 5-bit bin
-    // plus its ±1 neighbours), not a spatially-connected region.
+    // FGC: the largest colour blob inside the mask -> its weighted-median colour.
+    // "Blob" = fullest histogram cluster (the winning 5-bit bin plus its ±1 neighbours)
+    // "Blob" =/= a spatially-connected region.
     let fgc = (fg_hist.total() as f64 >= frame * MIN_REGION_FRAC)
         .then(|| dominant_bin(&fg_hist))
         .flatten()
