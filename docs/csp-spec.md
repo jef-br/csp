@@ -31,7 +31,7 @@ off that one decision.
 |---|---|---|
 | **A · Load** | Decode, apply EXIF orientation, read the embedded ICC profile. | `BUILT` |
 | **B · Preprocess** | Flatten alpha onto white, colour-manage to sRGB, derive the working-resolution copy. | `BUILT` |
-| **C · Classify** | Segment the working copy, then decide per edge whether the subject reaches it. Emits the EIX verdict — or no verdict. | `BUILT` (behind the `birefnet` feature) |
+| **C · Classify** | Segment the working copy, then decide per edge whether the subject reaches it. Emits the EIX verdict — or no verdict. | `BUILT` |
 | **D · Dispatch** | EIX verdict → one of three routes (§5). | `BUILT` |
 | **E · Route** | R1/R2 shape the square; R3 frames it safely. | `R3 BUILT` · `R1/R2 STUB` |
 | **F · Export** | Size envelope, then JPEG + ICC, then delete the source on success. | `BUILT` |
@@ -271,7 +271,7 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 |---|---|
 | Load / orient / flatten / sRGB | `BUILT` |
 | Working-resolution copy | `BUILT` |
-| Shot Classifier — BiRefNet + gate/refine | `BUILT` behind the `birefnet` feature |
+| Shot Classifier — BiRefNet + gate/refine | `BUILT` |
 | Edge intersections | `BUILT` |
 | Route selection (R1/R2/R3) | `BUILT` |
 | R3 · Fallback | `BUILT` |

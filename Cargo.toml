@@ -14,28 +14,13 @@ jpeg-encoder = "0.6"
 rayon = "1"
 tintbox = "0.4.0"
 
-# ONNX Runtime, pulled in only by the `birefnet` feature.
+# ONNX Runtime — real BiRefNet inference, always built in.
 ort = { version = "=2.0.0-rc.9", default-features = false, features = [
     "ndarray",
     "load-dynamic",
-], optional = true }
-ort-sys = { version = "=2.0.0-rc.9", optional = true }
-ndarray = { version = "0.16", optional = true }
-
-[features]
-# Real BiRefNet inference. Off by default: without it the classifier produces no verdict and every
-# image takes the R3 fallback route, which is a working pipeline, just an unrouted one. It also
-# keeps the gate/refine logic buildable and testable against a stand-in model, with no ONNX Runtime
-# to link.
-birefnet = ["dep:ort", "dep:ort-sys", "dep:ndarray"]
-
-[[example]]
-name = "inspect_birefnet"
-required-features = ["birefnet"]
-
-[[example]]
-name = "run_dir"
-required-features = ["birefnet"]
+] }
+ort-sys = "=2.0.0-rc.9"
+ndarray = "0.16"
 
 # Windows-only host integration (folders, message boxes, UI language).
 [target.'cfg(windows)'.dependencies]
@@ -49,9 +34,9 @@ windows-sys = { version = "0.59", features = [
 
 # Anti-RE + single-exe hardening. No PDB, no symbols, one codegen unit, abort on panic.
 #
-# The target is ONE hardened exe, no install. Not reached yet: with the `birefnet` feature the exe
-# still loads onnxruntime.dll and the .onnx model from beside itself (core::sidecar). A temporary
-# shortfall, not a change of intent — docs/ARCHITECTURE.md section 5 says what closing it takes.
+# The target is ONE hardened exe, no install. Not reached yet: the exe still loads onnxruntime.dll
+# and the .onnx model from beside itself (core::sidecar). A temporary shortfall, not a change of
+# intent — docs/ARCHITECTURE.md section 5 says what closing it takes.
 [profile.release]
 opt-level = 3
 lto = "fat"
