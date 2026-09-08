@@ -6,16 +6,22 @@ pub mod preprocessor;
 pub mod processor;
 pub mod shot_classifier;
 
-use shot_classifier::ShotClassification;
+use shot_classifier::{Mask, ShotClassification};
 use preprocessor::Prepared;
 use std::path::Path;
 
 /// Full per-file pipeline.
 pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
     let prep = preprocessor::prepare(input)?;
-    let class = classify(&prep);
-    let img = processor::routes::dispatch(&prep, class.as_ref());
-    exporter::export(&img, output, input)
+    let classified = classify(&prep);
+    let class = classified.as_ref().map(|(c, _)| c);
+    let img = processor::routes::dispatch(&prep, class);
+    let shot = classified.as_ref().map(|(class, mask)| exporter::ShotInputs {
+        working: &prep.working,
+        mask,
+        class,
+    });
+    exporter::export(&img, output, input, shot)
 }
 
 /// Run the shot classifier over the working-resolution copy.
@@ -23,8 +29,10 @@ pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
 /// `None` means no verdict — the model is unavailable, or inference failed on this image. That is
 /// not an error for the batch: `routes::dispatch` sends a no-verdict image down R3, which frames it
 /// safely without claiming to know where the subject is.
-#[cfg(feature = "birefnet")]
-fn classify(prep: &Prepared) -> Option<ShotClassification> {
+///
+/// The mask is carried out alongside the verdict: the exporter samples the BGC/FGC debug tags from
+/// it and writes it as `<stem>_segmask.png` when `CSP_DEBUG_TAGS` is set.
+fn classify(prep: &Prepared) -> Option<(ShotClassification, Mask)> {
     use crate::core::shot_classifier::segmentation::SegmentationModel;
     use crate::core::shot_classifier::{classify_instance, RefineParams, RefinementInput};
 
@@ -41,21 +49,14 @@ fn classify(prep: &Prepared) -> Option<ShotClassification> {
         safety_px: config::REFINE_SAFETY_PX,
         context_px: config::REFINE_CONTEXT_PX,
     };
-    Some(classify_instance(&input, config::GATE_MARGIN_PX, params))
-}
-
-/// Without the `birefnet` feature there is no model, so nothing is ever classified and every image
-/// takes R3. A working pipeline, just an unrouted one.
-#[cfg(not(feature = "birefnet"))]
-fn classify(_prep: &Prepared) -> Option<ShotClassification> {
-    None
+    let class = classify_instance(&input, config::GATE_MARGIN_PX, params);
+    Some((class, instance.mask))
 }
 
 /// The one shared model instance.
 ///
 /// `batch::run` fans `process_file` across cores with rayon, so this must not load per image — the
 /// session is ~180MB. Loaded once on first use; the outcome is cached either way.
-#[cfg(feature = "birefnet")]
 fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
     use shot_classifier::{BiRefNetConfig, BiRefNetModel};
     use std::sync::OnceLock;
@@ -79,16 +80,12 @@ fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
 ///
 /// Callers run this once at startup and abort on `Err`.
 pub fn preflight() -> Result<(), String> {
-    #[cfg(feature = "birefnet")]
-    {
-        model()?;
-    }
+    model()?;
     Ok(())
 }
 
 /// Resolve a file shipped alongside the executable: `$var` if set, else `<exe dir>/<name>`, else
 /// the bare name relative to the working directory.
-#[cfg(feature = "birefnet")]
 fn sidecar(var: &str, name: &str) -> std::path::PathBuf {
     if let Some(p) = std::env::var_os(var) {
         return std::path::PathBuf::from(p);

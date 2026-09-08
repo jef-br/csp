@@ -15,8 +15,9 @@
 //! Shot code (partial — BG type comes later):
 //!   EIX  edge intersection, 4-bit TRBL (top-right-bottom-left). `1000`
 //!        = top only, `0110` = right+bottom, `0000` = no intersection.
-//!        Forced to `1111` for a full-bleed close-up (tiny mask + no
-//!        uniform background).
+//!        Always the classifier's real verdict — a `full_bleed` flag
+//!        (probable full-bleed close-up: tiny mask, no uniform background)
+//!        is reported separately (console/JSON) and never overrides it.
 //!   BGC  background colour: dominant colour of the inverse BiRefNet
 //!        mask, emitted only when it covers >97.5% of that region.
 //!   FGC  foreground colour: weighted-median colour of the largest colour
@@ -25,8 +26,11 @@
 //!   `--` separates the stem from the tags; `=` stands in for the spec's
 //!   `:` (a colon is illegal in Windows filenames).
 //!
+//! The shot code is derived by `csp::core::shot_classifier::shotcode`, the
+//! same code the pipeline exporter uses for its `CSP_DEBUG_TAGS` output.
+//!
 //! Usage:
-//!   cargo run --release --features birefnet --example run_dir -- <input> [output_dir]
+//!   cargo run --release --example run_dir -- <input> [output_dir]
 //!   <input> is a folder of images or a single image file.
 //!
 //! Paths (override via env):
@@ -35,24 +39,12 @@
 
 use csp::core::shot_classifier::geometry::Rect;
 use csp::core::shot_classifier::refine::{RefineParams, RefinementInput};
-use csp::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, Mask, SegmentationModel};
+use csp::core::shot_classifier::shotcode::{self, ShotCode};
+use csp::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, SegmentationModel};
 use image::{Rgb, RgbImage};
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_OUTPUT: &str = "test data/OUTPUT";
-
-/// A colour must occupy at least this fraction of the background region
-/// (inverse mask) to be reported as BGC.
-const BGC_PRESENCE: f64 = 0.975;
-/// A region smaller than this fraction of the frame is too small to
-/// sample a colour from.
-const MIN_REGION_FRAC: f64 = 0.01;
-/// If the BiRefNet mask covers less than this fraction of the frame *and*
-/// no uniform background was found, the shot is treated as a full-bleed
-/// close-up: the subject fills the frame, so EIX is forced to `1111`.
-/// Interim rule — the texture / BG-type pass will replace it.
-const FULL_BLEED_MAX_FG: f64 = 0.05;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -130,14 +122,10 @@ fn main() {
         let input = RefinementInput { working_image: &image, original_image: &image, instance: inst };
         let result = classify_instance(&input, 20, RefineParams::default());
 
-        // --- shot code so far: BGC/FGC from the mask, EIX from the verdict ---
-        let ShotColors { bgc, fgc } = shot_colors(&image, &inst.mask);
+        // --- shot code: BGC/FGC from the mask, EIX from the verdict (shared with the pipeline) ---
+        let sc = shotcode::derive(&image, &inst.mask, &result);
+        let ShotCode { eix, bgc, fgc, full_bleed } = &sc;
         let fg_ratio = fg as f64 / total as f64;
-
-        // Full-bleed close-up: the segmenter found almost no subject and
-        // there is no uniform background -> the whole frame is subject.
-        let full_bleed = fg_ratio < FULL_BLEED_MAX_FG && bgc.is_none();
-        let eix = if full_bleed { "1111".to_string() } else { eix_bits(&result.touches_edges) };
 
         let edges: Vec<&str> = result.touches_edges.iter().map(edge_name).collect();
         let verdict = if edges.is_empty() { "none".to_string() } else { edges.join(", ") };
@@ -149,21 +137,14 @@ fn main() {
         println!(
             "{file_name:<44}  {:>10}  {code}   [{verdict}{}]",
             format!("{}x{}", image.width(), image.height()),
-            if full_bleed { " · full-bleed" } else { "" },
+            if *full_bleed { " · full-bleed" } else { "" },
         );
         for r in &result.refinements {
             println!("    gate flagged {:<6} -> refined: touching={}", edge_name(&r.edge), r.touching);
         }
 
         // step 0: the input image, verbatim, renamed with the shot code.
-        let mut tags = vec![format!("EIX={eix}")];
-        if let Some(c) = &bgc {
-            tags.push(format!("BGC={c}"));
-        }
-        if let Some(c) = &fgc {
-            tags.push(format!("FGC={c}"));
-        }
-        let tagged_name = format!("{stem}--{}.{ext}", tags.join("--"));
+        let tagged_name = format!("{stem}{}.{ext}", sc.tags());
         let _ = std::fs::copy(path, output_dir.join(&tagged_name));
 
         // step 1: BiRefNet foreground mask, full frame.
@@ -207,8 +188,8 @@ fn main() {
             fg_ratio,
             eix,
             full_bleed,
-            opt_str(&bgc),
-            opt_str(&fgc),
+            opt_str(bgc),
+            opt_str(fgc),
             edges.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>().join(","),
             gate_json.join(",")
         ));
@@ -227,160 +208,6 @@ fn main() {
 
     println!("\nwrote {}", json_path.display());
     println!("images written to {}", output_dir.display());
-}
-
-/// 4-bit edge-intersection string in fixed TRBL order.
-fn eix_bits(edges: &[Edge]) -> String {
-    let bit = |e: Edge| if edges.contains(&e) { '1' } else { '0' };
-    [bit(Edge::Top), bit(Edge::Right), bit(Edge::Bottom), bit(Edge::Left)]
-        .into_iter()
-        .collect()
-}
-
-struct ShotColors {
-    bgc: Option<String>,
-    fgc: Option<String>,
-}
-
-/// BGC and FGC, derived from the original image partitioned by the
-/// BiRefNet mask (background = inverse mask, foreground = mask).
-fn shot_colors(image: &RgbImage, mask: &Mask) -> ShotColors {
-    let (mut fg_hist, mut bg_hist) = (Hist::new(), Hist::new());
-    let w = image.width().min(mask.width);
-    let h = image.height().min(mask.height);
-    for y in 0..h {
-        for x in 0..w {
-            let p = image.get_pixel(x, y).0;
-            if mask.get(x, y) {
-                fg_hist.add(p);
-            } else {
-                bg_hist.add(p);
-            }
-        }
-    }
-    let frame = (w as u64 * h as u64).max(1) as f64;
-
-    // BGC: a single colour must cover >97.5% of the inverse-mask region.
-    let bgc = (bg_hist.total() as f64 >= frame * MIN_REGION_FRAC)
-        .then(|| dominant_cluster(&bg_hist))
-        .flatten()
-        .filter(|(frac, _)| *frac >= BGC_PRESENCE)
-        .map(|(_, c)| hex(c));
-
-    // FGC: the largest colour blob inside the mask -> its weighted-median
-    // colour. "Blob" is the fullest histogram cluster (the winning 5-bit
-    // bin plus its ±1 neighbours), not a spatially-connected region.
-    let fgc = (fg_hist.total() as f64 >= frame * MIN_REGION_FRAC)
-        .then(|| dominant_bin(&fg_hist))
-        .flatten()
-        .map(|top| {
-            let blob = cluster_bins(top);
-            // Per-channel value histograms over the blob's pixels, for a
-            // frequency-weighted median that shrugs off folds/shadows.
-            let mut chan = [[0u64; 256]; 3];
-            for y in 0..h {
-                for x in 0..w {
-                    if !mask.get(x, y) {
-                        continue;
-                    }
-                    let p = image.get_pixel(x, y).0;
-                    if blob.contains(&bin(p[0] >> 3, p[1] >> 3, p[2] >> 3)) {
-                        for c in 0..3 {
-                            chan[c][p[c] as usize] += 1;
-                        }
-                    }
-                }
-            }
-            hex([median(&chan[0]), median(&chan[1]), median(&chan[2])])
-        });
-
-    ShotColors { bgc, fgc }
-}
-
-/// Frequency-weighted median of a 256-bin value histogram.
-fn median(hist: &[u64; 256]) -> u8 {
-    let half = (hist.iter().sum::<u64>() + 1) / 2;
-    let mut cum = 0u64;
-    for (v, &c) in hist.iter().enumerate() {
-        cum += c;
-        if cum >= half {
-            return v as u8;
-        }
-    }
-    0
-}
-
-/// 5-bit-per-channel RGB histogram (32³ bins) that also carries the
-/// running colour sum per bin, so a bin's mean colour is recoverable.
-struct Hist {
-    count: Vec<u32>,
-    sum: Vec<[u64; 3]>,
-}
-
-impl Hist {
-    fn new() -> Self {
-        Hist { count: vec![0; 32 * 32 * 32], sum: vec![[0; 3]; 32 * 32 * 32] }
-    }
-    fn add(&mut self, p: [u8; 3]) {
-        let i = bin(p[0] >> 3, p[1] >> 3, p[2] >> 3);
-        self.count[i] += 1;
-        self.sum[i][0] += p[0] as u64;
-        self.sum[i][1] += p[1] as u64;
-        self.sum[i][2] += p[2] as u64;
-    }
-    fn total(&self) -> u64 {
-        self.count.iter().map(|&c| c as u64).sum()
-    }
-}
-
-fn bin(r: u8, g: u8, b: u8) -> usize {
-    ((r as usize) << 10) | ((g as usize) << 5) | (b as usize)
-}
-
-/// Index of the fullest histogram bin, or `None` if the region is empty.
-fn dominant_bin(h: &Hist) -> Option<usize> {
-    if h.total() == 0 {
-        return None;
-    }
-    h.count.iter().enumerate().max_by_key(|(_, &c)| c).map(|(i, _)| i)
-}
-
-/// The bin set forming one colour "blob": `top` plus its ±1 neighbours
-/// per channel, so JPEG dither around a boundary stays one colour.
-fn cluster_bins(top: usize) -> HashSet<usize> {
-    let (tr, tg, tb) = ((top >> 10) & 31, (top >> 5) & 31, top & 31);
-    let mut set = HashSet::new();
-    for dr in -1..=1i32 {
-        for dg in -1..=1i32 {
-            for db in -1..=1i32 {
-                set.insert(bin(
-                    (tr as i32 + dr).clamp(0, 31) as u8,
-                    (tg as i32 + dg).clamp(0, 31) as u8,
-                    (tb as i32 + db).clamp(0, 31) as u8,
-                ));
-            }
-        }
-    }
-    set
-}
-
-/// Fraction of the region occupied by the dominant colour blob, and that
-/// blob's mean RGB. `None` if the region is empty.
-fn dominant_cluster(h: &Hist) -> Option<(f64, [u8; 3])> {
-    let region = h.total();
-    let top = dominant_bin(h)?;
-    let (mut n, mut s) = (0u64, [0u64; 3]);
-    for i in cluster_bins(top) {
-        n += h.count[i] as u64;
-        s[0] += h.sum[i][0];
-        s[1] += h.sum[i][1];
-        s[2] += h.sum[i][2];
-    }
-    (n > 0).then(|| (n as f64 / region as f64, [(s[0] / n) as u8, (s[1] / n) as u8, (s[2] / n) as u8]))
-}
-
-fn hex(c: [u8; 3]) -> String {
-    format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
 fn crop_region(image: &RgbImage, r: Rect) -> RgbImage {
