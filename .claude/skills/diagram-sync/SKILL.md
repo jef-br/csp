@@ -1,8 +1,8 @@
 ---
 name: diagram-sync
 description: >
-  Keep CSP's docs/diagrams/*.drawio.svg diagrams (class-map, pipeline-flow,
-  detection-internals, geometry-routing) in sync with the code they document,
+  Keep CSP's docs/diagrams/*.drawio.svg diagrams (currently JBA2B, the
+  end-to-end App/Core flowchart) in sync with the code they document,
   and always read/edit them through their embedded mxGraph XML rather than
   as plain images. Use this whenever you add, rename, or remove a module,
   struct, enum, or public function/method in CSP's Rust source — check
@@ -15,13 +15,25 @@ description: >
 
 # Diagram sync
 
-CSP documents its architecture with four draw.io diagrams
-(`docs/diagrams/{class-map,pipeline-flow,detection-internals,geometry-routing}.drawio.svg`),
-referenced from `docs/ARCHITECTURE.md`. They are real SVGs — GitHub renders them as
-images — but each one also carries its full draw.io source embedded inside itself, so
-opening the same file in an editor drops you back into an editable diagram, not a dead
-picture. That dual nature is the thing to respect: treat the file as a diagram with a
-picture attached, not a picture with metadata attached.
+CSP documents its architecture with draw.io diagrams under `docs/diagrams/`, referenced
+from `docs/ARCHITECTURE.md`. They are real SVGs — GitHub renders them as images — but
+each one also carries its full draw.io source embedded inside itself, so opening the
+same file in an editor drops you back into an editable diagram, not a dead picture.
+That dual nature is the thing to respect: treat the file as a diagram with a picture
+attached, not a picture with metadata attached.
+
+**Current inventory — read this before assuming a diagram exists.** One file:
+`JBA2B.drawio.svg`, an end-to-end flowchart across four containers (App; Core, holding
+Preprocessor → Shot Classifier → Processor → Exporter; and a proposed CSP-Analyzer).
+The four topic diagrams this skill used to describe — `class-map`, `pipeline-flow`,
+`detection-internals`, `geometry-routing` — were deleted along with the classical
+detector they documented. Do not look for them, and do not treat their absence as
+something to repair by recreating them under the old names; the pipeline they described
+no longer exists.
+
+`JBA2B.drawio.svg` itself has known drift — its Shot Classifier and Processor containers
+still describe the retired detector. `docs/ARCHITECTURE.md` §5 lists the outstanding
+edits node by node. Reconcile against that list rather than re-deriving it.
 
 Two situations bring you here: **code changed** (does a diagram need a matching edit?)
 and **a diagram itself needs reading or editing** (are you touching the right layer?).
@@ -32,14 +44,13 @@ The maintenance rule (already stated in `CLAUDE.md` and `docs/ARCHITECTURE.md`):
 node per module, one node per `struct`/`enum`. If you added, renamed, or removed a
 module, a `struct`/`enum`, or a public function/method, check whether it's represented:
 
-1. Work out which diagram covers it:
-   - **class-map** — every module + struct/enum, fields, methods, dependency edges.
-     Almost anything touching public surface area lands here.
-   - **pipeline-flow** — the six `core::process_file` stages and what's handed between
-     them.
-   - **detection-internals** — how `detect()` picks a box.
-   - **geometry-routing** — how `plan()` turns a `Detection` into a `Layout`.
-2. Decode that file's XML (see §2) and search it for the module/type name to confirm
+1. Work out which container of `JBA2B.drawio.svg` covers it:
+   - **App** — folder discovery, the batch loop, the close prompt.
+   - **Preprocessor** — decode, EXIF orientation, alpha flatten, sRGB, working copy.
+   - **Shot Classifier** — segmentation and the two-pass edge verdict.
+   - **Processor** — `Route::select` and the three routes.
+   - **Exporter** — save, then delete the source on success.
+2. Decode the file's XML (see §2) and search it for the module/type name to confirm
    whether a node already exists.
 3. If it exists and your change affects what the node says (renamed, resigned,
    added/removed a public method), edit the node. If it's new public surface with no
@@ -71,7 +82,7 @@ files store it as plain nested XML instead — both forms exist in this repo.
 Don't hand-decode this. Run the bundled script:
 
 ```bash
-python3 .claude/skills/diagram-sync/scripts/decode_drawio.py docs/diagrams/class-map.drawio.svg
+python3 .claude/skills/diagram-sync/scripts/decode_drawio.py docs/diagrams/JBA2B.drawio.svg
 ```
 
 This prints the `<mxGraphModel>` XML: every `<mxCell>` node/edge, its `value` (label),
@@ -107,20 +118,22 @@ If no editor is available in the current environment, it's fine to *read* via th
 script and describe what needs to change, and leave the actual edit for a session or
 person that has the editor.
 
-## 3. On explicit request: check sync across all four diagrams
+## 3. On explicit request: check sync
 
 When asked to check/sync the diagrams (without a specific code change prompting it),
-walk all four files:
+walk every file in `docs/diagrams/` — today that is `JBA2B.drawio.svg` alone:
 
-1. Decode each with the script.
-2. For each, list the module/struct/enum nodes it contains (their `value` labels).
-3. Compare against the actual current code for that diagram's territory (grep the
+1. Decode it with the script.
+2. List the module/struct/enum nodes it contains (their `value` labels), per container.
+3. Compare against the actual current code for that container's territory (grep the
    relevant `src/` modules, or ask ripgrep for `pub struct`/`pub enum`/`pub fn`/`mod`
-   declarations in that diagram's scope).
+   declarations in that container's scope).
 4. Report drift plainly: nodes with no matching code (removed/renamed and diagram not
    updated), and public code with no matching node (added and diagram not updated).
 
+Check the outstanding list in `docs/ARCHITECTURE.md` §5 first — known drift is already
+written up there node by node, so start from it rather than rediscovering it.
+
 This is a manual, judgment-based comparison — not an automated AST-to-XML diff. Don't
-build tooling to fully automate it; the four diagrams are small enough that reading
-their decoded XML alongside the module list is fast and more reliable than a brittle
-parser.
+build tooling to fully automate it; the diagrams are small enough that reading their
+decoded XML alongside the module list is fast and more reliable than a brittle parser.

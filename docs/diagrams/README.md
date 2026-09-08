@@ -59,11 +59,19 @@ to check the visual layout too — same file, no separate format needed for eith
 
 ## CSP-Analyzer: tagging a diagram Rectangle and naming its debug image
 
+> **Status.** `src/bin/csp_analyzer.rs` was deleted with the classical detector, so this
+> protocol currently has no tool implementing it. Its successor is
+> `shot-classifier/examples/run_dir.rs`, which writes `<stem>_1_segmask.png` /
+> `<stem>_2_refine.png` per image on its own simpler scheme. Decide whether to port the
+> tag protocol below onto `run_dir` or retire it before following these steps.
+> `JBA2B.drawio.svg` is now the only diagram in this folder — the four coarser
+> `class-map` / `pipeline-flow` / `detection-internals` / `geometry-routing` diagrams this
+> section used to contrast it with were deleted along with the detector.
+
 `src/bin/csp_analyzer.rs` (a dev-only replay harness, see its own doc comment) writes one
 intermediate image per internal decision point it replays. Each of those images is tied to
 a specific Rectangle inside a Container on `docs/diagrams/JBA2B.drawio.svg` — the detailed
-per-decision flowchart, not the four coarser `class-map`/`pipeline-flow`/
-`detection-internals`/`geometry-routing` diagrams. Whenever a new snapshot moment is added:
+per-decision flowchart. Whenever a new snapshot moment is added:
 
 1. Find that Rectangle in its Container on `JBA2B.drawio.svg` and prepend its text with a
    one-word, ≤15-char title, bright green (`#00CC00`) and bold. Edit **both** layers or the
