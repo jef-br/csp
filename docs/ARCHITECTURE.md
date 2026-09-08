@@ -27,9 +27,12 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 |---|---|---|
 | **load** | `core::preprocessor::load` | path → `Decoded` (image + ICC profile, EXIF applied) |
 | **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + working copy) |
-| **classify** | `core::classify` (private) | `Prepared` → `Option<ShotClassification>` |
+| **classify** | `core::classify` (private) | `Prepared` → `Option<(ShotClassification, Mask)>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
-| **export** | `core::exporter::export` | `RgbImage` → size envelope → JPEG on disk, source deleted |
+| **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source deleted |
+
+`classify` carries the segmentation `Mask` out with the verdict; the exporter needs it for the
+debug tags below.
 
 ### Why two resolutions
 
@@ -77,15 +80,40 @@ it — that is expected, not drift.
 | `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare` |
 | `core::processor::routes` | `Route`, `Route::select`, `dispatch` |
 | `core::processor::routes::{center_and_stretch, crop_square, fallback}` | `apply` |
-| `core::exporter` | `export`; `save::save_jpeg_srgb`, `icc::srgb_profile` |
+| `core::exporter` | `export`, `ShotInputs`; `save::save_jpeg_srgb`, `icc::srgb_profile` |
 
 The refine params live in `config` next to `WORKING_SIZE` because they are expressed in
 working-resolution pixels — change one and the others shift meaning.
 
+#### Debug tags (`CSP_DEBUG_TAGS` marker file)
+
+Off by default — the shipped exe writes a clean `<stem>.jpg`. Drop a file named `CSP_DEBUG_TAGS`
+next to the executable (content ignored, only presence matters — same sidecar convention
+`core::sidecar` uses for `onnxruntime.dll`/the `.onnx` model) and the exporter instead names each
+output from the shot classifier's verdict:
+
+```
+<stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>].jpg   the export, renamed
+<stem>_segmask.png                                the working-resolution mask, 8-bit grey
+```
+
+`EIX` is the 4-bit top-right-bottom-left edge string — always the classifier's real verdict, the
+same one `Route::select` routed on; `BGC`/`FGC` are the dominant background / weighted-median
+foreground colours, each emitted only when sampleable. `=` stands in for the spec's `:` (illegal in
+Windows filenames). All three are derived in `shot_classifier::shotcode`, shared with the `run_dir`
+dev harness. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
+the name carries `EIX=____` and no segmask is written.
+
+`shotcode::ShotCode` also carries `full_bleed`: a tiny mask with no uniform background (probable
+full-bleed close-up). It is informational only and never overrides `eix` — a tag must never claim an
+edge intersection the pipeline didn't actually route on. `full_bleed` doesn't appear in the filename
+today; `run_dir`'s console output and `zzz_results.json` are where it's currently visible.
+
 ### `core::shot_classifier` — the classifier
 
 One module per job. `SegmentationModel` keeps the gate/refine logic independent of the ONNX
-binding, so it can be exercised against a stand-in model with the `birefnet` feature off.
+binding, so it can also be exercised against a stand-in model in tests — real BiRefNet inference is
+always built into the exe (no feature flag).
 
 | Module | Surface | Job |
 |---|---|---|
@@ -95,7 +123,8 @@ binding, so it can be exercised against a stand-in model with the `birefnet` fea
 | `geometry` | `Edge`, `Grid`, `EdgeView`, `Rect` | edge-relative coordinates |
 | `segmentation` | `Mask`, `Instance`, `SegmentationModel` | model-agnostic types |
 | `sampling` | `ColorStats`, `sample_background_color` | per-edge background colour |
-| `birefnet` | `BiRefNetConfig`, `BiRefNetModel` | ONNX inference (feature `birefnet`) |
+| `shotcode` | `ShotCode`, `derive`, `eix_bits`, `NO_VERDICT_EIX` | the `EIX`/`BGC`/`FGC` debug tag |
+| `birefnet` | `BiRefNetConfig`, `BiRefNetModel` | ONNX inference, always built in |
 
 `EdgeView` is the load-bearing idea: every per-edge algorithm is written once in "top edge, depth
 increasing downward" terms against the `Grid` trait, and the other three edges are presented by
@@ -129,7 +158,9 @@ spec behaviours it owns in its module docstring.
 ## 4. Known gaps
 
 - R1 and R2 are stubs, so a classified image is passed through and only the envelope resizes it.
-- `birefnet` is off by default; without it nothing is classified and every image takes R3.
+- BiRefNet inference is always built in; `core::preflight` aborts at startup, before any file is
+  touched, if the model/runtime sidecar files can't be found — a batch never silently falls back to
+  R3 for every image because of a missing model.
 
 ---
 
@@ -141,9 +172,9 @@ Hardening is already in place in `Cargo.toml`'s release profile — fat LTO, one
 symbols stripped, no PDB, abort on panic — and is anti-RE as much as size. The *single file* half
 is what is outstanding.
 
-It is currently not met. With the `birefnet` feature the exe needs two files beside it, resolved by
-`core::sidecar`: `onnxruntime.dll` (~14MB) and `birefnet_lite_512.onnx` (~179MB, or
-`birefnet_lite_int8.onnx` at ~90MB).
+It is currently not met. The exe needs two files beside it, resolved by `core::sidecar`:
+`onnxruntime.dll` (~14MB) and `birefnet_lite_512.onnx` (~179MB, or `birefnet_lite_int8.onnx` at
+~90MB).
 
 What meeting it takes, in two independent pieces:
 
@@ -167,7 +198,7 @@ to trade away.
 
 `docs/diagrams/JBA2B.drawio.svg` is an end-to-end flowchart across four containers: **App**,
 **Core** (Preprocessor → Shot Classifier → Processor → Exporter), and a proposed **CSP-Analyzer**.
-Its App and Exporter containers still match the code. The rest has drifted:
+Its App container still matches the code. The rest has drifted:
 
 **Preprocessor container**
 - `Alpha channel present?` / `Use decoded RGB as-is (no alpha)` — alpha is now always flattened onto
@@ -190,6 +221,12 @@ is where `resize::to_envelope` now runs.
 Not to be confused with the spec's 42% background-stretch limit (`docs/csp-spec.md` §6), which is a
 different rule that happens to share the number 1.42: it caps how far a background *band* may be
 stretched during fill, and is live design for R1.
+
+**Exporter container** — needs the `[800, 2000]` resize node moved in from the Processor container
+(above), plus a node for the optional `CSP_DEBUG_TAGS` branch: rename the output to
+`<stem>--EIX=…[--BGC=…][--FGC=…]` and write `<stem>_segmask.png` beside it, from
+`shot_classifier::shotcode`. The classify step's output also changes from `Option<ShotClassification>`
+to `Option<(ShotClassification, Mask)>` — the mask is threaded to the Exporter for that branch.
 
 **CSP-Analyzer container** — its target, `src/bin/csp_analyzer.rs`, was deleted. Either drop the
 container or re-point it at `examples/run_dir.rs`, which now fills that role.

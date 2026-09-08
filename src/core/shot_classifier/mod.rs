@@ -22,15 +22,14 @@
 //! stand-in model. [`super::classify`] wires the real one up and feeds
 //! [`classify_instance`] the preprocessor's two resolutions.
 
-#[cfg(feature = "birefnet")]
 pub mod birefnet;
 pub mod gate;
 pub mod geometry;
 pub mod refine;
 pub mod sampling;
 pub mod segmentation;
+pub mod shotcode;
 
-#[cfg(feature = "birefnet")]
 pub use birefnet::{BiRefNetConfig, BiRefNetModel};
 pub use geometry::Edge;
 pub use refine::{EdgeRefinement, RefineParams, RefinementInput};

@@ -8,9 +8,10 @@ One crate, one `src/` tree.
   one module per stage. The shot classifier lives at `src/core/shot_classifier/`.
 * `examples/`, `tools/` — the BiRefNet dev harness and the ONNX export script.
 
-Real inference sits behind the `birefnet` feature, off by default. Without it nothing is
-classified and every image takes the R3 fallback route. The `.onnx` model and `onnxruntime.dll`
-are gitignored and live beside the executable, not in the repo.
+Real inference is always built in — no feature flag. The `.onnx` model and `onnxruntime.dll` are
+gitignored and live beside the executable, not in the repo; if the exe can't find them at startup
+it aborts before touching any file (`core::preflight`), rather than silently taking the R3 fallback
+route for the whole batch.
 
 ## Ships as one hardened exe, no install
 A hard requirement, currently unmet — the two files above sit beside the exe. The release profile
