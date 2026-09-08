@@ -22,7 +22,7 @@ pub mod crop_square;
 pub mod fallback;
 
 use super::super::preprocessor::Prepared;
-use csp_shot_classifier::ShotClassification;
+use crate::core::shot_classifier::ShotClassification;
 use image::RgbImage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +64,7 @@ pub fn dispatch(prep: &Prepared, class: Option<&ShotClassification>) -> RgbImage
 #[cfg(test)]
 mod tests {
     use super::*;
-    use csp_shot_classifier::Edge;
+    use crate::core::shot_classifier::Edge;
 
     fn verdict(touches: &[Edge]) -> ShotClassification {
         ShotClassification { touches_edges: touches.to_vec(), refinements: Vec::new() }

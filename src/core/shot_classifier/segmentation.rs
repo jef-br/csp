@@ -1,11 +1,10 @@
 //! Segmentation types.
 //!
 //! [`SegmentationModel`] deliberately abstracts over the actual BiRefNet
-//! ONNX inference call — wire up CSP's model loader/runtime to implement
-//! it. Everything else in this crate only depends on the [`Mask`]/
-//! [`Instance`] shapes, not on how they were produced.
+//! ONNX inference call. Everything else here depends only on the
+//! [`Mask`]/[`Instance`] shapes, not on how they were produced.
 
-use crate::geometry::{Grid, Rect};
+use super::geometry::{Grid, Rect};
 
 /// A binary instance mask in *working resolution* coordinates — i.e. the
 /// preprocessor's output space (the 1020px-longest-side working image),
@@ -14,7 +13,7 @@ use crate::geometry::{Grid, Rect};
 /// BiRefNet produces its mask at a fixed internal resolution (1024x1024)
 /// and it is resized to this size; that resampling is why the mask
 /// boundary is not pixel-accurate, and why the pass-2 refinement in
-/// [`crate::refine`] exists at all.
+/// [`super::refine`] exists at all.
 #[derive(Debug, Clone)]
 pub struct Mask {
     pub width: u32,
@@ -77,9 +76,8 @@ pub struct Instance {
     pub confidence: f32,
 }
 
-/// Abstraction over the BiRefNet segmentation model, so this crate
-/// doesn't hard-depend on a specific ONNX runtime binding. Implement this
-/// against CSP's actual model loader/inference call.
+/// Abstraction over the BiRefNet segmentation model, so the gate/refine
+/// logic doesn't hard-depend on a specific ONNX runtime binding.
 pub trait SegmentationModel {
     /// `image` is the preprocessor's working-resolution RGB output.
     ///

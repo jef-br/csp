@@ -25,8 +25,8 @@
 //! `class_id`/`confidence` are unused placeholders — [`SegmentationModel`]
 //! only cares about the mask from here on.
 
-use crate::geometry::Rect;
-use crate::segmentation::{Instance, Mask, SegmentationModel};
+use super::geometry::Rect;
+use super::segmentation::{Instance, Mask, SegmentationModel};
 use image::{imageops::FilterType, RgbImage};
 use ort::session::Session;
 use ort::value::Tensor;
@@ -52,12 +52,34 @@ pub struct BiRefNetModel {
 }
 
 impl BiRefNetModel {
+    /// Loads the runtime and the model.
+    ///
+    /// Both paths are checked before `ort` is touched: `ort::init_from(..).commit()` *panics*
+    /// rather than returning `Err` when the dylib is missing, so without this the operator gets a
+    /// stack trace out of a dylib loader instead of a sentence naming the file. The failure is
+    /// still fatal — see `core::preflight`.
     pub fn load(
         model_path: impl AsRef<std::path::Path>,
         onnxruntime_dylib_path: impl AsRef<std::path::Path>,
         config: BiRefNetConfig,
+    ) -> Result<Self, String> {
+        let dylib = onnxruntime_dylib_path.as_ref();
+        let model = model_path.as_ref();
+        for (what, path) in [("ONNX Runtime", dylib), ("BiRefNet model", model)] {
+            if !path.is_file() {
+                return Err(format!("{what} not found at {}", path.display()));
+            }
+        }
+
+        Self::load_checked(model, dylib, config).map_err(|e| e.to_string())
+    }
+
+    fn load_checked(
+        model_path: &std::path::Path,
+        onnxruntime_dylib_path: &std::path::Path,
+        config: BiRefNetConfig,
     ) -> ort::Result<Self> {
-        ort::init_from(onnxruntime_dylib_path.as_ref().to_string_lossy().to_string()).commit()?;
+        ort::init_from(onnxruntime_dylib_path.to_string_lossy().to_string()).commit()?;
         // BiRefNet's activations are heavy (a swin backbone + deformable
         // decoder). Keep peak memory bounded: no arena growth, single
         // intra-op thread, and cap graph optimization at Level1 — the

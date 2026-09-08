@@ -21,7 +21,7 @@ impl Edge {
 }
 
 /// A read-only 2D grid of values addressed as `(x, y)`, `(0, 0)` at the
-/// top-left. Implemented for [`crate::segmentation::Mask`] directly and
+/// top-left. Implemented for [`super::segmentation::Mask`] directly and
 /// for `image::RgbImage` via a thin adapter, so both can be run through
 /// the same edge-relative algorithms.
 pub trait Grid {

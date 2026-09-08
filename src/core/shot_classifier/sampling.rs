@@ -4,8 +4,8 @@
 //! [`EdgeView`]'s coordinate transform, so this runs once per edge with
 //! no edge-specific branching here.
 
-use crate::geometry::{Edge, EdgeView, Grid};
-use crate::segmentation::Mask;
+use super::geometry::{Edge, EdgeView, Grid};
+use super::segmentation::Mask;
 use image::{Rgb, RgbImage};
 
 #[derive(Debug, Clone, Copy)]
@@ -27,8 +27,7 @@ impl ColorStats {
     }
 }
 
-/// Thin adapter so `RgbImage` satisfies [`Grid`] without CSP's image
-/// pipeline needing to depend on this crate's trait directly.
+/// Thin adapter so `RgbImage` satisfies [`Grid`].
 pub(crate) struct ImageGrid<'a>(pub &'a RgbImage);
 
 impl<'a> Grid for ImageGrid<'a> {

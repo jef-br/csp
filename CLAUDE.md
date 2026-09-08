@@ -2,10 +2,11 @@
 Project notes for any Claude session working in this repo.
 
 ## Layout
-Cargo workspace, two members:
-* `.` — the `csp` binary: app shell (folder flow, batch, i18n) + imaging core
-  (`load → preprocess → classify → dispatch → export`).
-* `shot-classifier/` — the BiRefNet shot classifier, usable on its own.
+One crate, one `src/` tree.
+* `src/app/` — host shell: folder flow, batch, i18n.
+* `src/core/` — the pipeline: `load → preprocess → classify → dispatch → export`,
+  one module per stage. The shot classifier lives at `src/core/shot_classifier/`.
+* `examples/`, `tools/` — the BiRefNet dev harness and the ONNX export script.
 
 Real inference sits behind the `birefnet` feature, off by default. Without it nothing is
 classified and every image takes the R3 fallback route. The `.onnx` model and `onnxruntime.dll`
