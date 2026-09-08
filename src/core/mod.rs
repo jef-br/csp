@@ -6,6 +6,7 @@
 pub mod config;
 pub mod exporter;
 pub mod preprocessor;
+pub mod processor;
 
 use std::path::Path;
 

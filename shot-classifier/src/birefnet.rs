@@ -72,12 +72,24 @@ impl BiRefNetModel {
         Ok(BiRefNetModel { session, config })
     }
 
-    fn input_size(&self) -> (u32, u32) {
+    /// Reads the model's declared NCHW input side. Dynamic axes come back as `-1`, which would
+    /// otherwise become a ~4-billion-pixel allocation, so they are rejected here with a message
+    /// naming the fix rather than dying in the allocator.
+    fn input_size(&self) -> Result<(u32, u32), String> {
         let dims = match &self.session.inputs[0].input_type {
             ort::value::ValueType::Tensor { dimensions, .. } => dimensions,
-            _ => panic!("unexpected BiRefNet input type — expected a tensor"),
+            other => return Err(format!("unexpected BiRefNet input type: {other:?}")),
         };
-        (dims[3] as u32, dims[2] as u32) // NCHW: width, height
+        if dims.len() != 4 {
+            return Err(format!("expected a 4-D NCHW input, got {} dims", dims.len()));
+        }
+        if dims[2] <= 0 || dims[3] <= 0 {
+            return Err(format!(
+                "model declares a dynamic input size ({}x{}); re-export at a fixed side",
+                dims[3], dims[2]
+            ));
+        }
+        Ok((dims[3] as u32, dims[2] as u32)) // NCHW: width, height
     }
 }
 
@@ -86,8 +98,8 @@ fn sigmoid(x: f32) -> f32 {
 }
 
 impl SegmentationModel for BiRefNetModel {
-    fn segment(&self, image: &RgbImage) -> Vec<Instance> {
-        let (in_w, in_h) = self.input_size();
+    fn segment(&self, image: &RgbImage) -> Result<Vec<Instance>, String> {
+        let (in_w, in_h) = self.input_size()?;
 
         // Plain resize (no letterbox/padding) per BiRefNet's own
         // preprocessing, then ImageNet normalization.
@@ -100,18 +112,18 @@ impl SegmentationModel for BiRefNetModel {
             }
         }
         let input = Tensor::from_array(([1usize, 3, in_h as usize, in_w as usize], chw))
-            .expect("building the input tensor from a correctly-sized buffer cannot fail");
+            .map_err(|e| format!("build input tensor: {e}"))?;
 
-        let input_values = ort::inputs!["input_image" => input]
-            .expect("building the session inputs from a single named tensor cannot fail");
+        let input_values =
+            ort::inputs!["input_image" => input].map_err(|e| format!("build session inputs: {e}"))?;
         let outputs = self
             .session
             .run(input_values)
-            .expect("BiRefNet inference failed — see the ort error for details");
+            .map_err(|e| format!("BiRefNet inference: {e}"))?;
 
         let logits = outputs["output_image"]
             .try_extract_tensor::<f32>()
-            .expect("output_image was not the expected f32 tensor");
+            .map_err(|e| format!("output_image was not an f32 tensor: {e}"))?;
         let logit_data: Vec<f32> = logits.iter().copied().collect();
 
         // Resize the model-resolution mask back to the working image's
@@ -138,6 +150,6 @@ impl SegmentationModel for BiRefNetModel {
         // bbox so the gate/refine pipeline (which only reads the mask
         // near the border) works unmodified.
         let bbox = Rect::from_bounds(0, 0, out_w.saturating_sub(1), out_h.saturating_sub(1));
-        vec![Instance { mask, bbox, class_id: 0, confidence: 1.0 }]
+        Ok(vec![Instance { mask, bbox, class_id: 0, confidence: 1.0 }])
     }
 }
