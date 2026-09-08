@@ -24,92 +24,114 @@ I fold changes back in here.
 
 ## 2 · Pipeline overview
 
-Six phases. The Shot Classifier is the new brain that everything else hangs off.
+Five stages. The Shot Classifier decides which route an image takes; everything downstream hangs
+off that one decision.
 
-| Phase | Does | Status |
+| Stage | Does | Status |
 |---|---|---|
-| **A · Preprocess + Shot Classifier (SC)** | Load, orient, flatten. Then analyse the *whole image* and decide the strategy per photo type. | `PLANNED` |
-| **B · Detect** | Find the subject box (method chosen by SC). | `PARTIAL` |
-| **C · Classify outcome** | Subject / salient-square / whole-frame. | `analyzers broken` |
-| **D · Route** | Edge-touch pattern → crop strategy. | `analyzers broken` |
-| **E · Crop & compose** | CoG/MSR square → background fill → resize. | `redesign` |
-| **F · Save** | JPEG + ICC. | `BUILT` |
+| **A · Load** | Decode, apply EXIF orientation, read the embedded ICC profile. | `BUILT` |
+| **B · Preprocess** | Flatten alpha onto white, colour-manage to sRGB, derive the working-resolution copy. | `BUILT` |
+| **C · Classify** | Segment the working copy, then decide per edge whether the subject reaches it. Emits the EIX verdict — or no verdict. | `BUILT` (behind the `birefnet` feature) |
+| **D · Dispatch** | EIX verdict → one of three routes (§5). | `BUILT` |
+| **E · Route** | R1/R2 shape the square; R3 frames it safely. | `R3 BUILT` · `R1/R2 STUB` |
+| **F · Export** | Size envelope, then JPEG + ICC, then delete the source on success. | `BUILT` |
+
+"Detect" and "classify outcome" are no longer separate phases. Segmentation produces the mask and
+the edge verdict in one pass, so there is no intermediate box to find and then classify.
 
 ---
 
-## 3 · Shot Classifier (SC) — the brain `PLANNED`
+## 3 · Shot Classifier (SC) — the brain `BUILT`
 
-SC runs first and analyses the whole image (not just the background). It is cheap, so it does
-the heavy analysis once and everyone downstream reuses it. Start small, grow it.
+SC runs on the working-resolution copy and answers one question: **which image edges does the
+subject actually reach?** That verdict is what routing keys on (§5).
 
-### 3.1 Owns / contains
+A bounding box cannot answer it reliably — a box can touch an edge while the silhouette does not,
+and vice versa for a diagonal pose. So the answer comes from segmentation, not geometry.
 
-- SLIC superpixels and the geodesic border prior (moved here from Detect — they're analysis, not detection).
-- Global contrast analysis.
-- Otsu-style bins for the dominant foreground and background colours.
-- Histogram knee-normalisation (the post-CLAHE re-balance we discussed) to build a rebalanced *temp* image that aids binary-mask building. This is what used to be called the "rescue"; it's now just part of SC's standard analysis, so the rescue attempt is free when needed.
+### 3.1 How it works
 
-### 3.2 Behaves like a hysteresis
+BiRefNet (dichotomous image segmentation, ONNX) produces one foreground mask for the whole image —
+no boxes, no classes, no NMS. The edge verdict is then taken in two passes:
 
-Analyse → run detection → compare point A (pre) vs point B (post) → conclude behaviour.
-SC is allowed to "go back in time" and decide based on the difference, not a single snapshot.
+- **Pass 1 · gate.** Scan only a `GATE_MARGIN_PX`-wide band along each edge of the mask. A hit means
+  "worth checking precisely", *not* "touches": the mask is upsampled from the model's internal
+  resolution and is not trusted for the verdict.
+- **Pass 2 · refine.** For each gated edge, intersect the mask with the border band, crop that region
+  at full resolution, and build a trimap — interior foreground, exterior background, a ring around
+  the boundary marked unknown. Classify the unknown ring by colour distance to sampled foreground
+  and background. The refined mask, not the raw mask, answers touching or not.
 
-### 3.3 Flat-background test `PLANNED`
+Pass 2 does real work at every scale. When the working copy equals the original there is no
+upsampling error left to correct, but the colour matting on the unknown ring runs identically.
 
-Build a background-likeness binary image. If **one blob connects all four image edges and
-encloses exactly one hole**, that's a clean background/subject split. Holes inside the hole
-don't matter — a bbox ignores interior holes. Output is a **binary image** that can later be
-combined with others via unions/intersections to make compound masks.
+### 3.2 Output contract
+
+`ShotClassification { touches_edges: Vec<Edge>, refinements: Vec<EdgeRefinement> }` — or **no
+verdict**, when the model is unavailable or inference failed on that image.
+
+Those are different states and they route differently (§5). This answers Q3.
+
+### 3.3 What SC no longer owns
+
+SLIC superpixels, the geodesic border prior, CLAHE, histogram knee-normalisation, Otsu bins, the
+flat-background blob test and the pre/post hysteresis compare were the classical detector's
+machinery. They were deleted with it. Segmentation replaces all of them — do not reintroduce them
+piecemeal.
 
 ### 3.4 Triggers
 
-SC is the same preprocessor that will trigger the Phase-2 human detector when the shot needs
-it (people, head-to-toe framing). It also owns fixing the edge-intersection analyzers (§5)
-that Detect's routing depends on.
-
-> **Open:** exact SC output contract — which binary layers + scalars it hands downstream
-> (bg-mask, subject-mask, contrast stats, dominant colours, saliency, human-signal).
-> To be pinned as we build.
+SC remains the place a Phase-2 human detector would hook in (people, head-to-toe framing).
 
 ---
 
-## 4 · Resolution & bbox policy `PLANNED`
+## 4 · Resolution & bbox policy `BUILT`
 
-- **Analysis size:** if the largest image dimension ≤ 1024 px, use the full image. If larger, resize to 1024 on the long side for analysis.
-- **Bbox coordinates are always resolved at full resolution.** Analysis may run small for speed, but the final box edges are snapped on the full-size image. (This is the fix for the loose-box problem, P2.)
+- **Working size:** if the largest dimension is ≤ `WORKING_SIZE` (1024 px), the image is used as-is;
+  larger images are reduced to 1024 on the long side. Never upscaled — upscaling would invent detail
+  the model then reads as real.
+- **Boundaries are resolved at full resolution.** Segmentation runs on the working copy for speed,
+  but pass 2 re-decides the boundary against full-resolution pixels. Both resolutions travel together
+  as `Prepared { original, working }` for exactly this reason. (This is the fix for the loose-box
+  problem, P2.)
 
-### 4.1 Edge-intersection detection `BROKEN today`
+### 4.1 Edge-intersection detection `BUILT`
 
-"Does the subject run off an image edge?" is decided per edge like this:
-
-1. Cut a **4.2% ring** off every edge of the image.
-2. Run edge detection on the ring (Canny, or a cross/gradient operator — whatever tests best).
-3. If a lit edge-pixel **touches the image border**, that border is an intersected edge.
-
-These four booleans feed the routing tree in §5. The tree logic is fine; the current
-analyzers producing the booleans are what's failing.
+Replaced. The 4.2% ring + Canny scheme is gone — it was the analyzer that collapsed 97% of images to
+"touches no edge". Edge intersection is now the gate/refine result described in §3.1: a decision per
+edge taken on the segmentation mask and confirmed at full resolution.
 
 ---
 
-## 5 · Detection outcomes & routing
+## 5 · Detection outcomes & routing `BUILT`
 
-Three outcomes: **Subject** (a real box), **Salient-square** (busy/detail shot → take the most
-salient square), **Whole-frame** (no clean subject). Then routing keys on how many edges the
-subject touches.
+Three routes, keyed on the edge-intersection (EIX) verdict:
 
-> **Data note.** Across 107 CiMini images today: 104 touch 0 edges, 1 touches 1, 1 touches 2,
-> 0 touch 3, 1 touches 4. The 3-edge branch has no example. The tree isn't wrong — the
-> analyzers feeding it (§4.1) are broken, so almost everything collapses to "0 edges".
-> Fixing §4.1 is expected to redistribute this.
+| Route | Verdict | Strategy |
+|---|---|---|
+| **R1** · Center & Stretch | EIX `0000` — reaches no edge | free-standing → CoG/MSR square (§6) |
+| **R2** · CropSquare | EIX set and non-zero | crop into real pixels, anchored on the edges touched |
+| **R3** · Fallback | EIX not set — no verdict | whole image, uncropped, centred on a square canvas |
 
-| edges | strategy |
-|---|---|
-| 0 | free-standing → CoG/MSR square (§6) |
-| 1 | flush to that edge, centre the other axis |
-| 2 opposite | fill that whole axis |
-| 2 adjacent | flush into the shared corner |
-| 3 | fill the boxed-in axis |
-| 4 | fully bled → CoG/MSR square with extension (§6) |
+**Three routes, six behaviours.** The table below is not a competing route list — it is the *inside*
+of R1 and R2. Choosing among these is a behaviour, not a routing decision, so it never reaches route
+selection.
+
+| edges | behaviour | lives in |
+|---|---|---|
+| 0 | free-standing → CoG/MSR square (§6) | R1 |
+| 1 | flush to that edge, centre the other axis | R2 |
+| 2 opposite | fill that whole axis | R2 |
+| 2 adjacent | flush into the shared corner | R2 |
+| 3 | fill the boxed-in axis | R2 |
+| 4 | fully bled → CoG/MSR square with extension (§6) | R2 |
+
+R3 has no row here. It is the answer to "we don't know", and it exists because a model failure must
+not be silently processed as a clean free-standing shot.
+
+> **Data note.** The old analyzers collapsed 113 of 116 CiMini images to "0 edges". Re-measured over
+> 112 images with segmentation: **84** touch 0 edges, **12** touch 1, **12** touch 2, **2** touch 3,
+> **2** touch 4. The 3-edge branch, which previously had no example anywhere, now has two.
 
 ---
 
@@ -205,24 +227,28 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 
 ## 7 · Problem map
 
-| # | Symptom | Mechanism | Owner in target |
+| # | Symptom | Original mechanism | Status |
 |---|---|---|---|
-| P1 | Box creeps down into hand / pants / shadow | No shadow carve in the live (geodesic) path; connected low-contrast bleed | SC (contrast + shadow) & human detector |
-| P2 | Box too loose | Detect at 480px + rescale padding | §4 full-res bbox |
-| P3 | Flat shot under-detected, box cuts in | Geodesic approximates instead of subtracting a flat background | §3.3 flat-bg test |
-| feet | Head-to-toe model loses feet (fb_02 #9) | Low-contrast feet vs border-connected floor → flood climbs in | human detector (Phase 2) |
-| nonna | Real-life scene → whole-frame box → double stretch | No flat bg to isolate subject; geometry stretches to hit box+margin | §3 (isolate) + §6 (crop-in) |
+| P1 | Box creeps down into hand / pants / shadow | No shadow carve in the live geodesic path; connected low-contrast bleed | Mechanism gone with the geodesic path. Segmentation does not carve shadow because it does not include it. Re-test rather than assume. |
+| P2 | Box too loose | Detection at 480px, box rescaled up with the padding baked in | Addressed — §4: boundaries confirmed at full resolution |
+| P3 | Flat shot under-detected, box cuts in | Geodesic approximates the background instead of subtracting it | Mechanism gone — no geodesic path |
+| feet | Head-to-toe model loses feet (fb_02 #9) | Low-contrast feet vs border-connected floor → flood-fill climbs in | Open. The flood-fill that caused it is gone; needs re-testing against segmentation |
+| nonna | Real-life scene → whole-frame box → double stretch | No flat background to isolate the subject; geometry stretched to hit box+margin | Open until R1 lands — §6's crop-in-first is the fix |
 
 ---
 
 ## 8 · Decisions locked
 
-- SC is the brain; owns SLIC + geodesic + contrast + Otsu bins + knee-normalisation; emits reusable binary layers. Start small.
-- Rescue is not a separate stage — it's SC's standard contrast analysis.
-- Analysis ≤1024; bbox always full-res; intersections via 4.2% ring + edge detection.
-- Crop is CoG/MSR-anchored, real-pixels-first, ≤42% stretch.
-- Edge-routing tree kept; its analyzers get fixed, not removed.
-- Output 1:1 [800,2000], JPEG q90–95 4:4:4 sRGB.
+- SC is the brain, and it is segmentation-based: a BiRefNet mask plus a two-pass gate/refine edge
+  verdict. The SLIC / geodesic / CLAHE / Otsu machinery is deleted, not paused.
+- **"No verdict" is a first-class outcome**, distinct from "touches no edge". It routes to R3.
+- Working size ≤1024; boundaries always confirmed at full resolution.
+- Crop is CoG/MSR-anchored, real-pixels-first, ≤42% stretch. (§6, unchanged.)
+- Three routes, six behaviours: the edge table lives *inside* R1 and R2, never above them.
+- Output 1:1 [800,2000], JPEG q90–95 4:4:4 sRGB. The envelope is enforced in the exporter — which
+  every route ends at — so no route can bypass it.
+- Ships as one hardened exe with no install. Currently unmet: ONNX Runtime and the model sit beside
+  the exe. A temporary shortfall, not a change of intent.
 
 ---
 
@@ -230,9 +256,12 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 
 - **Q1** · `LOSS_MAX` value (§6.4 ①).
 - **Q2** · CoG definition — saliency-weighted centroid confirmed? (§6.4 ②)
-- **Q3** · SC output contract — exact layers/scalars handed downstream (§3.4).
-- **Q4** · SLIC patch count — likely reducible from 700; tune once SC's needs are known.
+- **Q3** · ~~SC output contract~~ — **answered**, see §3.2.
+- **Q4** · ~~SLIC patch count~~ — **moot**, SLIC is gone.
 - **Q5** · Human detector interface — what signal it returns and how §6 consumes it (Phase 2).
+- **Q6** · R2's five behaviours (§5) each need implementing, and each needs its own acceptance case.
+- **Q7** · Small-source policy. The envelope upscales anything under 800px with no cap; the old
+  whole-image 1.42× cap is gone. Decide whether small sources should be capped, padded, or refused.
 
 ---
 
@@ -240,13 +269,18 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 
 | Piece | State |
 |---|---|
-| Load / orient / flatten | `BUILT` |
-| Shot Classifier | `PLANNED` |
-| Flat-bg test | `PLANNED` |
-| Full-res bbox + ring intersections | `BROKEN / PLANNED` |
-| Shadow carve (geodesic path) | `LOST in migration` |
-| CoG/MSR crop | `PLANNED` |
-| Background fill / resize / save | `BUILT` |
+| Load / orient / flatten / sRGB | `BUILT` |
+| Working-resolution copy | `BUILT` |
+| Shot Classifier — BiRefNet + gate/refine | `BUILT` behind the `birefnet` feature |
+| Edge intersections | `BUILT` |
+| Route selection (R1/R2/R3) | `BUILT` |
+| R3 · Fallback | `BUILT` |
+| R1 · Center & Stretch | `STUB` |
+| R2 · CropSquare | `STUB` |
+| CoG/MSR crop (§6) | `PLANNED` — lands with R1 |
+| Output size envelope | `BUILT` — in the exporter |
+| Save JPEG + ICC | `BUILT` |
+| Single hardened exe, no install | `NOT MET` — see `docs/ARCHITECTURE.md` §5 |
 | Human detector | `PHASE 2` |
 
 ---
