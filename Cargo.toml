@@ -33,11 +33,11 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Console",
 ] }
 
-# Release hardening. No PDB, no symbols, one codegen unit, abort on panic.
+# Anti-RE + single-exe hardening. No PDB, no symbols, one codegen unit, abort on panic.
 #
-# CSP ships as ONE FILE with no install. That is a requirement, not a preference.
-# It is currently NOT met: with the `birefnet` feature the exe loads onnxruntime.dll and the .onnx
-# model from beside itself (see core::sidecar). See docs/ARCHITECTURE.md "Single file, no install".
+# The target is ONE hardened exe, no install. Not reached yet: with the `birefnet` feature the exe
+# still loads onnxruntime.dll and the .onnx model from beside itself (core::sidecar). A temporary
+# shortfall, not a change of intent — docs/ARCHITECTURE.md section 5 says what closing it takes.
 [profile.release]
 opt-level = 3
 lto = "fat"
