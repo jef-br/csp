@@ -1,3 +1,6 @@
+[workspace]
+members = ["shot-classifier"]
+
 [package]
 name = "csp"
 version = "0.1.0"
@@ -10,8 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 image = "0.25"
-imageproc = "0.25"
-rustfft = "6"
 jpeg-encoder = "0.6"
 rayon = "1"
 tintbox = "0.4.0"
