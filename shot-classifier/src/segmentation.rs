@@ -82,5 +82,11 @@ pub struct Instance {
 /// against CSP's actual model loader/inference call.
 pub trait SegmentationModel {
     /// `image` is the preprocessor's working-resolution RGB output.
-    fn segment(&self, image: &image::RgbImage) -> Vec<Instance>;
+    ///
+    /// Returns `Err` when no verdict could be produced — a failed
+    /// inference, an unusable model output. That is a distinct outcome
+    /// from "segmented, and the subject touches no edge", and callers
+    /// route on the difference: a batch keeps going and the image falls
+    /// to its no-verdict route rather than the whole run panicking.
+    fn segment(&self, image: &image::RgbImage) -> Result<Vec<Instance>, String>;
 }
