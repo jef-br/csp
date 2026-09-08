@@ -7,8 +7,8 @@
 //! still working-resolution and upsampled, so it isn't trusted for the
 //! actual yes/no decision.
 
-use crate::geometry::{Edge, EdgeView, Grid};
-use crate::segmentation::Mask;
+use super::geometry::{Edge, EdgeView, Grid};
+use super::segmentation::Mask;
 
 #[derive(Debug, Clone, Default)]
 pub struct EdgeProximity {

@@ -4,8 +4,9 @@ pub mod config;
 pub mod exporter;
 pub mod preprocessor;
 pub mod processor;
+pub mod shot_classifier;
 
-use csp_shot_classifier::ShotClassification;
+use shot_classifier::ShotClassification;
 use preprocessor::Prepared;
 use std::path::Path;
 
@@ -24,10 +25,10 @@ pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
 /// safely without claiming to know where the subject is.
 #[cfg(feature = "birefnet")]
 fn classify(prep: &Prepared) -> Option<ShotClassification> {
-    use csp_shot_classifier::segmentation::SegmentationModel;
-    use csp_shot_classifier::{classify_instance, RefineParams, RefinementInput};
+    use crate::core::shot_classifier::segmentation::SegmentationModel;
+    use crate::core::shot_classifier::{classify_instance, RefineParams, RefinementInput};
 
-    let instances = model()?.segment(&prep.working).ok()?;
+    let instances = model().ok()?.segment(&prep.working).ok()?;
     let instance = instances.into_iter().next()?;
 
     let input = RefinementInput {
@@ -53,32 +54,36 @@ fn classify(_prep: &Prepared) -> Option<ShotClassification> {
 /// The one shared model instance.
 ///
 /// `batch::run` fans `process_file` across cores with rayon, so this must not load per image — the
-/// session is tens to hundreds of megabytes. Loaded once on first use; a load failure is reported
-/// once and then every image falls to R3 rather than each one re-reporting it.
+/// session is ~180MB. Loaded once on first use; the outcome is cached either way.
 #[cfg(feature = "birefnet")]
-fn model() -> Option<&'static csp_shot_classifier::BiRefNetModel> {
-    use csp_shot_classifier::{BiRefNetConfig, BiRefNetModel};
+fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
+    use shot_classifier::{BiRefNetConfig, BiRefNetModel};
     use std::sync::OnceLock;
 
-    static MODEL: OnceLock<Option<BiRefNetModel>> = OnceLock::new();
+    static MODEL: OnceLock<Result<BiRefNetModel, String>> = OnceLock::new();
     MODEL
         .get_or_init(|| {
             let model_path = sidecar("BIREFNET_ONNX", "birefnet_lite_512.onnx");
             let dylib_path = sidecar("ORT_DYLIB_PATH", "onnxruntime.dll");
-            match BiRefNetModel::load(&model_path, &dylib_path, BiRefNetConfig::default()) {
-                Ok(m) => Some(m),
-                Err(e) => {
-                    eprintln!(
-                        "shot classifier unavailable ({e}); every image will take the fallback \
-                         route.\n  model:   {}\n  runtime: {}",
-                        model_path.display(),
-                        dylib_path.display()
-                    );
-                    None
-                }
-            }
+            BiRefNetModel::load(&model_path, &dylib_path, BiRefNetConfig::default())
         })
         .as_ref()
+        .map_err(|e| e.clone())
+}
+
+/// Check the classifier can actually run, before any image is touched.
+///
+/// A missing ONNX Runtime or model is an environment fault, not an image outcome: it should stop
+/// the run loudly rather than quietly sending every image down the no-verdict route. R3 is for
+/// images the classifier looked at and could not judge — not for a broken install.
+///
+/// Callers run this once at startup and abort on `Err`.
+pub fn preflight() -> Result<(), String> {
+    #[cfg(feature = "birefnet")]
+    {
+        model()?;
+    }
+    Ok(())
 }
 
 /// Resolve a file shipped alongside the executable: `$var` if set, else `<exe dir>/<name>`, else

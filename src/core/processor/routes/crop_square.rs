@@ -18,7 +18,7 @@
 //! Stub: returns the image unchanged.
 
 use super::super::super::preprocessor::Prepared;
-use csp_shot_classifier::ShotClassification;
+use crate::core::shot_classifier::ShotClassification;
 use image::RgbImage;
 
 pub fn apply(prep: &Prepared, _class: Option<&ShotClassification>) -> RgbImage {
