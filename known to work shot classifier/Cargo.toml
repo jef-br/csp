@@ -1,0 +1,28 @@
+[package]
+name = "csp_shot_classifier"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = { version = "0.24", default-features = false, features = ["jpeg", "png"] }
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["ndarray", "load-dynamic"], optional = true }
+ndarray = { version = "0.16", optional = true }
+
+[dependencies.ort-sys]
+version = "=2.0.0-rc.9"
+optional = true
+
+[[example]]
+name = "inspect_birefnet"
+required-features = ["birefnet"]
+
+[[example]]
+name = "run_dir"
+required-features = ["birefnet"]
+
+[features]
+# Real BiRefNet segmentation inference via ONNX Runtime (the `ort` crate).
+# Off by default so consumers who only need the geometry/matting pipeline
+# (e.g. running against a different model, or just the pass-2 refinement
+# logic in isolation) aren't forced to link ONNX Runtime.
+birefnet = ["dep:ort", "dep:ort-sys", "dep:ndarray"]
