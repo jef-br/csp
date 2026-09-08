@@ -32,7 +32,7 @@ something to repair by recreating them under the old names; the pipeline they de
 no longer exists.
 
 `JBA2B.drawio.svg` itself has known drift — its Shot Classifier and Processor containers
-still describe the retired detector. `docs/ARCHITECTURE.md` §5 lists the outstanding
+still describe the retired detector. `docs/ARCHITECTURE.md` §6 lists the outstanding
 edits node by node. Reconcile against that list rather than re-deriving it.
 
 Two situations bring you here: **code changed** (does a diagram need a matching edit?)
@@ -131,7 +131,7 @@ walk every file in `docs/diagrams/` — today that is `JBA2B.drawio.svg` alone:
 4. Report drift plainly: nodes with no matching code (removed/renamed and diagram not
    updated), and public code with no matching node (added and diagram not updated).
 
-Check the outstanding list in `docs/ARCHITECTURE.md` §5 first — known drift is already
+Check the outstanding list in `docs/ARCHITECTURE.md` §6 first — known drift is already
 written up there node by node, so start from it rather than rediscovering it.
 
 This is a manual, judgment-based comparison — not an automated AST-to-XML diff. Don't
