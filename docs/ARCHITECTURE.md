@@ -128,12 +128,6 @@ spec behaviours it owns in its module docstring.
 ## 4. Known gaps
 
 - R1 and R2 are stubs, so a classified image is passed through and only the envelope resizes it.
-- **No upscale cap.** `exporter::resize::to_envelope` enlarges anything under `MIN_SIZE` straight
-  to 800px with no limit, so a 300px source is blown up 2.67x. The old pipeline capped this at
-  `MAX_UPSCALE` = 1.42x and had the fill stage grow the canvas to `ceil(MIN_SIZE / MAX_UPSCALE)` =
-  564px first, so the final upscale stayed inside the cap. Neither the constant nor the cap exists
-  in the code today. Restoring the cap alone would mean returning images below `MIN_SIZE`; it needs
-  the fill stage, which lands with R1.
 - `birefnet` is off by default; without it nothing is classified and every image takes R3.
 
 ---
@@ -187,9 +181,14 @@ Replace with: segment the working copy → pass 1 gate per edge → pass 2 refin
 `touches_edges`, or no verdict.
 
 **Processor container** — obsolete. `Detection kind = SalientSquare?` and `Edge-intersect count = 0?`
-become the three-way `Route::select`. The `MIN_SIZE / MAX_UPSCALE` growth and the `[800, 2000]`
-resize nodes describe code that no longer exists (see Known gaps) — either mark them as pending or
-remove them until the envelope is reimplemented.
+become the three-way `Route::select`. The `MIN_SIZE / MAX_UPSCALE` growth node should be deleted
+outright: `MAX_UPSCALE` was a whole-image upscale cap that no longer exists anywhere in the code and
+is not coming back. The `[800, 2000]` resize node stays, but moves to the Exporter container — that
+is where `resize::to_envelope` now runs.
+
+Not to be confused with the spec's 42% background-stretch limit (`docs/csp-spec.md` §6), which is a
+different rule that happens to share the number 1.42: it caps how far a background *band* may be
+stretched during fill, and is live design for R1.
 
 **CSP-Analyzer container** — its target, `src/bin/csp_analyzer.rs`, was deleted. Either drop the
 container or re-point it at `shot-classifier/examples/run_dir.rs`, which now fills that role.
