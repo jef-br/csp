@@ -138,9 +138,13 @@ spec behaviours it owns in its module docstring.
 
 ---
 
-## 5. Single file, no install
+## 5. Single hardened exe, no install
 
-**CSP ships as one executable with no installation step. This is a hard requirement.**
+**CSP ships as one hardened executable with no installation step. This is a hard requirement.**
+
+Hardening is already in place in `Cargo.toml`'s release profile — fat LTO, one codegen unit,
+symbols stripped, no PDB, abort on panic — and is anti-RE as much as size. The *single file* half
+is what is outstanding.
 
 It is currently not met. With the `birefnet` feature the exe needs two files beside it, resolved by
 `core::sidecar`: `onnxruntime.dll` (~14MB) and `birefnet_lite_512.onnx` (~179MB, or
@@ -156,6 +160,11 @@ What meeting it takes, in two independent pieces:
    `ort-sys` at it. This is the substantial piece.
 
 Expected result: one `.exe` of roughly 110MB using the int8 model, or ~195MB using fp32.
+
+Note this serves the hardening, not just packaging: a loose `.onnx` beside the exe is the most
+copyable thing CSP owns, and a loose `onnxruntime.dll` is a swap point. Folding both inside a
+stripped single binary is the point of the requirement, which is why it is not merely a convenience
+to trade away.
 
 ---
 

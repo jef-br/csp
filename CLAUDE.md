@@ -11,10 +11,11 @@ Real inference sits behind the `birefnet` feature, off by default. Without it no
 classified and every image takes the R3 fallback route. The `.onnx` model and `onnxruntime.dll`
 are gitignored and live beside the executable, not in the repo.
 
-## Ships as one file, no install
-A hard requirement, currently unmet — the two files above sit beside the exe. Do not quietly
-redesign around the sidecar arrangement; it is a temporary state. `docs/ARCHITECTURE.md` §5 says
-what closing it takes.
+## Ships as one hardened exe, no install
+A hard requirement, currently unmet — the two files above sit beside the exe. The release profile
+already carries the anti-RE hardening; the single-file half is what is missing. Do not quietly
+redesign around the sidecar arrangement, and do not restate the requirement as optional; it is a
+temporary state. `docs/ARCHITECTURE.md` §5 says what closing it takes.
 
 ## Diagrams
 * `docs/diagrams/JBA2B.drawio.svg` is the one remaining draw.io diagram — an end-to-end
