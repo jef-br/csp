@@ -1,24 +1,15 @@
-//! R2 — the subject reaches at least one edge (EIX set, non-zero).
+//! R2 — the subject bleeds off all four edges (EIX `1111`).
 //!
-//! This route holds the five bleed behaviours from `docs/csp-spec.md` §5. Which one applies is
-//! decided *here*, from `touches_edges` — it is a behaviour inside R2, not a routing decision, so
-//! it never reaches `Route::select`:
+//! The one bleed case R1 cannot take. Everything else with a bled edge — one edge, two opposite,
+//! two adjacent, three — is the same rule with different edges pinned, and lives in
+//! [`super::center_and_stretch`]. Here the subject's box *is* the frame: every edge is blocked, so
+//! there is nowhere to put the square's slack, and there is no background band anywhere to stretch
+//! from. Both of R1's mechanisms are unavailable at once, which is why this is a route and not a
+//! branch.
 //!
-//! | edges touched | behaviour |
-//! |---|---|
-//! | 1 | flush to that edge, centre the other axis |
-//! | 2 opposite | fill that whole axis |
-//! | 2 adjacent | flush into the shared corner |
-//! | 3 | fill the boxed-in axis |
-//! | 4 | fully bled → CoG/MSR square with extension |
-//!
-//! Per §5's data note the 3-edge case has never fired on the CiMini set, so it is the one to watch
-//! when the distribution is re-measured.
-//!
-//! **Saliency lives here, not in R1.** Only the 4-edge row needs it: a fully-bled subject reaches
-//! every border, so there is no background left to anchor a square against and the crop has to be
-//! placed from where the salient mass actually sits. Every other row anchors on the edges the
-//! subject touches, and [`super::center_and_stretch`] anchors on the mask's bounding box.
+//! `docs/csp-spec.md` §5 calls for a CoG/MSR square with extension: anchor on the saliency-weighted
+//! centre of the most salient region, since with no background to read there is nothing else to
+//! anchor on. Per §5's data note this fired on 2 of 112 CiMini images.
 //!
 //! Stub: returns the image unchanged.
 
