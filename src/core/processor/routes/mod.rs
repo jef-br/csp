@@ -1,32 +1,30 @@
 //! Routing: turn the shot classifier's verdict into one of three processing routes.
 //!
-//! Three routes, keyed on the edge-intersection (EIX) verdict:
-//!
 //! | Route | Verdict | Strategy |
 //! |---|---|---|
-//! | R1 [`Route::CenterAndStretch`] | at least one edge free | square around the subject, blocked edges pinned, background stretched to fill |
-//! | R2 [`Route::CropSquare`] | all four edges bled | no background anywhere to stretch from |
-//! | R3 [`Route::Fallback`] | no verdict, or a mask not worth believing | fit the whole image into a square canvas |
+//! | R1 [`Route::CenterAndStretch`] | a usable mask with room to grow | square around the subject, bled edges pinned, background stretched to fill |
+//! | R2 [`Route::CropSquare`] | no usable mask, or no room to grow | take the largest square already in the frame |
+//! | R3 [`Route::Fallback`] | no verdict at all | fit the whole image into a square canvas |
 //!
 //! **The bleed table lives inside R1.** `docs/csp-spec.md` §5 lists five behaviours for a subject
-//! that reaches an edge — flush to one edge, fill an axis bled at both ends, flush into a shared
-//! corner, fill the boxed-in axis, full bleed. The first four are one rule seen from four angles:
-//! a bled edge is blocked, an axis with a free side takes the margin, and the slack goes to the
-//! free sides. [`center_and_stretch`] applies that rule, so those four never reach
-//! [`Route::select`] as a routing decision at all.
+//! that reaches an edge. Four of them are one rule seen from four angles: a bled edge is blocked,
+//! an axis with a free side takes the margin, and the slack goes to the free sides.
+//! [`center_and_stretch`] applies that rule, so those four never reach [`Route::select`] as a
+//! routing decision at all.
 //!
-//! Only the full bleed is genuinely different, and that is what R2 is left holding: with all four
-//! edges blocked the subject's box is the frame, and there is no background to stretch.
+//! **What does reach it is whether framing is possible.** R2 is not "the other bleed case" — it is
+//! the answer to "there is nothing here to frame around, or no room to do it in". Three verdicts
+//! say that, and [`crop_square`] explains each.
 //!
-//! R3 is not a spec row. It exists because "the model produced no verdict" is a genuinely different
-//! state from "the model looked and found no edge touched" — see [`Route::select`].
+//! R3 is not a spec row. It exists because "the model produced no verdict" is a genuinely
+//! different state from any verdict the model did produce — see [`Route::select`].
 
 pub mod center_and_stretch;
 pub mod crop_square;
 pub mod fallback;
 
 use super::super::preprocessor::Prepared;
-use crate::core::shot_classifier::{geometry::Rect, Mask, ShotClassification};
+use crate::core::shot_classifier::{geometry::Rect, Edge, Mask, ShotClassification};
 use image::RgbImage;
 
 /// What the classifier produced for one image: the edge verdict, and the mask it was read from.
@@ -81,9 +79,9 @@ impl<'a> Shot<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
-    /// R1 — the subject leaves at least one edge free.
+    /// R1 — frame around the subject.
     CenterAndStretch,
-    /// R2 — the subject bleeds off all four edges.
+    /// R2 — crop a square out of the frame.
     CropSquare,
     /// R3 — no classification was produced.
     Fallback,
@@ -92,26 +90,34 @@ pub enum Route {
 impl Route {
     /// Pick the route for a verdict.
     ///
-    /// One free edge is all R1 needs: it gives the square somewhere legal to put its slack, and a
-    /// band of real background to stretch from. So the split is not "touches nothing" against
-    /// "touches something" — it is "has somewhere to grow" against "does not".
+    /// R1 needs two things: a mask that describes a subject, and room to put a square around it.
+    /// Each of R2's three verdicts is one of those two missing.
     ///
     /// `None` means the classifier could not produce a verdict at all — a failed inference, an
-    /// unusable model output. That is deliberately distinct from `Some` with an empty
-    /// `touches_edges`: the first is "we don't know", the second is "we looked, and it touches
-    /// nothing". They take different routes, so a model failure degrades one image instead of
-    /// silently being processed as a clean free-standing shot.
+    /// unusable model output. That is deliberately distinct from any verdict it *did* produce, so
+    /// a model failure degrades one image instead of being silently processed as a clean shot.
     pub fn select(class: Option<&ShotClassification>) -> Route {
-        match class {
-            None => Route::Fallback,
-            // A mask that describes nothing is not a subject to frame around. Cropping to it
-            // magnifies whichever speck the segmenter latched onto, which is a worse answer than
-            // R3's — and a louder failure than it looks, because the size envelope then upscales
-            // that speck to fill an 800px square.
-            Some(c) if c.full_bleed => Route::Fallback,
-            Some(c) if c.touches_edges.len() < 4 => Route::CenterAndStretch,
-            Some(_) => Route::CropSquare,
+        let Some(c) = class else {
+            return Route::Fallback;
+        };
+        // Nothing to frame around: the mask does not describe a subject, so cropping to it would
+        // magnify whichever speck the segmenter latched onto — and the size envelope would then
+        // blow that speck up to fill an 800px square.
+        if c.mask_too_small {
+            return Route::CropSquare;
         }
+        // No room to frame in. Left and right both bled and nothing else: the subject spans the
+        // full width, so the square can be at most that wide, and it is taller than that. Growing
+        // the width means painting background over a subject that runs off-frame. Three bled
+        // edges are excluded deliberately — the free edge gives R1 somewhere to put the slack,
+        // which is why a 3-edge image frames correctly today.
+        let horizontally_boxed_in = c.touches_edges.len() == 2
+            && c.touches_edges.contains(&Edge::Left)
+            && c.touches_edges.contains(&Edge::Right);
+        if horizontally_boxed_in || c.touches_edges.len() == 4 {
+            return Route::CropSquare;
+        }
+        Route::CenterAndStretch
     }
 }
 
@@ -130,10 +136,9 @@ pub fn dispatch(prep: &Prepared, shot: Option<Shot<'_>>) -> RgbImage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::shot_classifier::Edge;
 
     fn verdict(touches: &[Edge]) -> ShotClassification {
-        ShotClassification { touches_edges: touches.to_vec(), full_bleed: false, refinements: Vec::new() }
+        ShotClassification { touches_edges: touches.to_vec(), mask_too_small: false, refinements: Vec::new() }
     }
 
     #[test]
@@ -143,8 +148,9 @@ mod tests {
 
     #[test]
     fn every_edge_combination_routes() {
-        // All 16 subsets of the four edges. Only the empty set is free-standing; every other
-        // combination bleeds off at least one edge and crops.
+        // All 16 subsets of the four edges. R1 takes every one that leaves it a way to build the
+        // square; the two that do not are left+right (no room to grow the boxed-in axis) and the
+        // full bleed (nothing anywhere to grow from).
         for bits in 0u8..16 {
             let touches: Vec<Edge> = Edge::ALL
                 .iter()
@@ -153,31 +159,50 @@ mod tests {
                 .map(|(_, &e)| e)
                 .collect();
 
-            // Everything short of a full bleed leaves R1 an edge to work against; only all four
-            // blocked leaves it with no background anywhere to stretch from.
-            let expected = if bits == 0b1111 { Route::CropSquare } else { Route::CenterAndStretch };
+            let boxed_in = touches.len() == 2
+                && touches.contains(&Edge::Left)
+                && touches.contains(&Edge::Right);
+            let expected = if boxed_in || bits == 0b1111 {
+                Route::CropSquare
+            } else {
+                Route::CenterAndStretch
+            };
             let got = Route::select(Some(&verdict(&touches)));
             assert_eq!(got, expected, "bits {bits:04b} ({touches:?}) routed to {got:?}");
         }
     }
 
     #[test]
-    fn a_full_bleed_is_the_only_verdict_that_leaves_r1() {
-        assert_eq!(Route::select(Some(&verdict(&Edge::ALL))), Route::CropSquare);
+    fn left_and_right_crop_but_top_and_bottom_do_not() {
+        // The asymmetry is real and it is not about the axis. Left+right bled means the square
+        // cannot be wider than the frame while the subject is taller than it, so something has to
+        // be cropped. Top+bottom bled means the square is as tall as the frame and the width has
+        // room to stretch into, which R1 does well.
+        assert_eq!(Route::select(Some(&verdict(&[Edge::Left, Edge::Right]))), Route::CropSquare);
         assert_eq!(
-            Route::select(Some(&verdict(&[Edge::Top, Edge::Bottom, Edge::Left]))),
-            Route::CenterAndStretch,
-            "three blocked edges still leave one free side to take the slack"
+            Route::select(Some(&verdict(&[Edge::Top, Edge::Bottom]))),
+            Route::CenterAndStretch
         );
     }
 
     #[test]
-    fn a_mask_worth_nothing_falls_back_whatever_its_edges_say() {
-        // The 6/30 case: the edge verdict may be perfectly ordinary, but there is no subject
-        // behind it, so no route that crops to the mask can produce a sane frame.
+    fn a_third_bled_edge_hands_the_image_back_to_r1() {
+        // Two edges left+right crop; add a third and R1 takes it again, because the one remaining
+        // free edge is somewhere to put the slack. This is image 29 of the test set, which frames
+        // correctly.
+        assert_eq!(
+            Route::select(Some(&verdict(&[Edge::Left, Edge::Right, Edge::Bottom]))),
+            Route::CenterAndStretch
+        );
+    }
+
+    #[test]
+    fn a_mask_worth_nothing_crops_whatever_its_edges_say() {
+        // Images 6 and 30: the edge verdict may be perfectly ordinary, but there is no subject
+        // behind it, so no route that frames around the mask can produce a sane result.
         for touches in [vec![], vec![Edge::Top], Edge::ALL.to_vec()] {
-            let class = ShotClassification { full_bleed: true, ..verdict(&touches) };
-            assert_eq!(Route::select(Some(&class)), Route::Fallback, "{touches:?}");
+            let class = ShotClassification { mask_too_small: true, ..verdict(&touches) };
+            assert_eq!(Route::select(Some(&class)), Route::CropSquare, "{touches:?}");
         }
     }
 
