@@ -17,7 +17,8 @@ diagram drifted.
 ## 1. Pipeline
 
 `core::process_file` runs five stages in order. `app::batch::run` fans this over every image in the
-input folder with `rayon`; on success the source file is deleted, on failure it is left in place.
+input folder with `rayon`; on success the source file is moved to the backup folder (`CSP-BACKUP`),
+on failure it is left in place.
 
 ```
 load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
@@ -29,7 +30,7 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 | **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + working copy) |
 | **classify** | `core::classify` (private) | `Prepared` → `Option<(ShotClassification, Mask)>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
-| **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source deleted |
+| **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source moved to `CSP-BACKUP` |
 
 `classify` carries the segmentation `Mask` out with the verdict; the exporter needs it for the
 debug tags below.
@@ -61,8 +62,8 @@ silently processed as a clean free-standing shot.
 
 | Module | Surface | Notes |
 |---|---|---|
-| `app::batch` | `run(input, output) -> Summary`, `Summary` | rayon fan-out, one level of subfolder recursion |
-| `app::shell` | `run()` | Windows double-click flow: desktop `CSP-INPUT` → `CSP-OUTPUT` |
+| `app::batch` | `run(input, output, backup) -> Summary`, `Summary` | rayon fan-out, one level of subfolder recursion |
+| `app::shell` | `run()` | Windows double-click flow: desktop `CSP-INPUT` → `CSP-OUTPUT`, originals → `CSP-BACKUP` |
 | `app::console` | `init`, `ui_language`, `folder_link`, `pause` | Windows-only; ANSI, OSC-8 links, UI language |
 | `app::desktop` | `desktop_dir()` | Windows-only |
 | `app::i18n` | `Lang`, `drop_prompt`, `processing`, `finished`, `close_line` | EN/ES/FR/NL/IT/DE |
