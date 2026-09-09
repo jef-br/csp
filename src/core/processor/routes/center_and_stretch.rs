@@ -13,9 +13,11 @@
 //! Stub: returns the image unchanged.
 
 use super::super::super::preprocessor::Prepared;
-use crate::core::shot_classifier::ShotClassification;
+use super::Shot;
 use image::RgbImage;
 
-pub fn apply(prep: &Prepared, _class: Option<&ShotClassification>) -> RgbImage {
+/// `shot` carries the verdict and the working-resolution mask; `shot.subject_bbox_in(prep)` gives
+/// the subject's box in `prep.original`'s coordinates, which is what the square gets built around.
+pub fn apply(prep: &Prepared, _shot: Shot<'_>) -> RgbImage {
     prep.original.clone()
 }

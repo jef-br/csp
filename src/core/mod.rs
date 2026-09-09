@@ -14,8 +14,10 @@ use std::path::Path;
 pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
     let prep = preprocessor::prepare(input)?;
     let classified = classify(&prep);
-    let class = classified.as_ref().map(|(c, _)| c);
-    let img = processor::routes::dispatch(&prep, class);
+    let shot = classified
+        .as_ref()
+        .map(|(class, mask)| processor::routes::Shot { class, mask });
+    let img = processor::routes::dispatch(&prep, shot);
     let shot = classified.as_ref().map(|(class, mask)| exporter::ShotInputs {
         working: &prep.working,
         mask,
