@@ -40,6 +40,15 @@ pub const REFINE_NARROW_BAND_PX: u32 = 5;
 /// and a real bleed-off at 17.7% differ only in shape.
 pub const GRAZE_RATIO_MAX: f32 = 0.80;
 
+/// Below this fraction of the frame, a mask is only believed when a uniform background was also
+/// found. Small *and* no background to sit against means the segmenter latched onto a detail of a
+/// close-up rather than a subject — see `shotcode::is_full_bleed`.
+///
+/// Measured over the 37-image set: the two masks that describe nothing cover 0.0% and 4.4% of the
+/// frame, and the smallest mask that describes a real product covers 13.5%. The gap is wide enough
+/// that the exact value barely matters.
+pub const FULL_BLEED_MAX_FG: f64 = 0.05;
+
 /// Pass-2 safety margin excluded around the mask when sampling background colour.
 pub const REFINE_SAFETY_PX: u32 = 10;
 
