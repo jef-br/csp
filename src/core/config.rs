@@ -18,8 +18,27 @@ pub const WORKING_SIZE: u32 = 1024;
 /// Pass-1 gate: an edge is worth refining when foreground appears within this many pixels of it.
 pub const GATE_MARGIN_PX: u32 = 20;
 
-/// Pass-2 band width: how far in from the border the refinement looks.
+/// Pass-2 band width: how far in from the border the refinement looks. Also the *wide* band of
+/// the graze test below.
 pub const REFINE_BAND_PX: u32 = 20;
+
+/// Pass-2 graze test, narrow band: compared against `REFINE_BAND_PX` to tell a subject truncated
+/// by the frame from one that merely grazes it.
+///
+/// Keep it well below the wide band — the test's separation collapses as the two converge. Across
+/// 46 masks the gap between the worst graze and the best bleed-off was 0.31 at 5px/20px, but only
+/// 0.18 at 10px/20px. Not narrower than ~5 either: the mask over-reaches the border by about one
+/// antialiased row, and a 2px band gives that one bad row half the vote.
+pub const REFINE_NARROW_BAND_PX: u32 = 5;
+
+/// Pass-2 graze test threshold. Below this ratio of narrow-band to wide-band coverage the contact
+/// is a graze — the silhouette runs *along* the border instead of off it — and the edge reports as
+/// not touching, so the image routes R1 rather than R2.
+///
+/// Sits in an empty gap: the two hand-labelled grazes measure 0.611 and 0.614, and all 22
+/// bleed-offs measure 0.926 or above. Size cannot make this call — a graze at 17.0% of the edge
+/// and a real bleed-off at 17.7% differ only in shape.
+pub const GRAZE_RATIO_MAX: f32 = 0.80;
 
 /// Pass-2 safety margin excluded around the mask when sampling background colour.
 pub const REFINE_SAFETY_PX: u32 = 10;

@@ -48,6 +48,8 @@ fn classify(prep: &Prepared) -> Option<(ShotClassification, Mask)> {
         band_px: config::REFINE_BAND_PX,
         safety_px: config::REFINE_SAFETY_PX,
         context_px: config::REFINE_CONTEXT_PX,
+        narrow_band_px: config::REFINE_NARROW_BAND_PX,
+        graze_ratio_max: config::GRAZE_RATIO_MAX,
     };
     let class = classify_instance(&input, config::GATE_MARGIN_PX, params);
     Some((class, instance.mask))
