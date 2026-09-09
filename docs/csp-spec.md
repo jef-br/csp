@@ -33,7 +33,7 @@ off that one decision.
 | **B · Preprocess** | Flatten alpha onto white, colour-manage to sRGB, derive the working-resolution copy. | `BUILT` |
 | **C · Classify** | Segment the working copy, then decide per edge whether the subject reaches it. Emits the EIX verdict — or no verdict. | `BUILT` |
 | **D · Dispatch** | EIX verdict → one of three routes (§5). | `BUILT` |
-| **E · Route** | R1/R2 shape the square; R3 frames it safely. | `R1 BUILT` · `R3 BUILT` · `R2 STUB` |
+| **E · Route** | R1/R2 shape the square; R3 frames it safely. | `BUILT` |
 | **F · Export** | Size envelope, then JPEG + ICC, then delete the source on success. | `BUILT` |
 
 "Detect" and "classify outcome" are no longer separate phases. Segmentation produces the mask and
@@ -109,9 +109,23 @@ Three routes, keyed on the edge-intersection (EIX) verdict:
 
 | Route | Verdict | Strategy |
 |---|---|---|
-| **R1** · Center & Stretch | at least one edge free (EIX `0000`–any three bits) | square around the subject, bled edges pinned, background stretched to fill |
-| **R2** · CropSquare | EIX `1111` — bleeds off all four edges | CoG/MSR square with extension (§6) |
+| **R1** · Center & Stretch | a usable mask with room to grow | square around the subject, bled edges pinned, background stretched to fill |
+| **R2** · CropSquare | no usable mask, or no room to grow | largest square already in the frame, centred |
 | **R3** · Fallback | EIX not set — no verdict | whole image, uncropped, centred on a square canvas |
+
+R2 takes three verdicts:
+
+| verdict | why R1 cannot | example |
+|---|---|---|
+| mask covers < `MASK_MIN_COVERAGE` of the frame | nothing to frame around | 6 (0.0%), 30 (4.4%) |
+| EIX `0101` — left and right bled, nothing else | the square cannot be wider than the frame, and the subject is taller than that | 3 |
+| EIX `1111` — all four bled | nowhere to put a margin, no band to stretch from | none in this set |
+
+Left+right crops but top+bottom does not, and the asymmetry is not about the axis: left+right bled
+means the square is capped at the frame width while the subject is taller, so something must be
+cropped. Top+bottom bled means the square is as tall as the frame and the width has room to stretch
+into — which R1 does well (4, 35, 36). A *third* bled edge hands the image back to R1, because the
+one remaining free edge is somewhere to put the slack (29).
 
 ### 5.1 One rule, not six behaviours `REVISED 2026-09-09`
 
@@ -134,6 +148,7 @@ see. Everything else follows, per axis:
 | 2 adjacent | both pinned, slack onto the two free sides | flush into the shared corner |
 | 3 | slack entirely onto the one free side | fill the boxed-in axis |
 | 4 | — no free side, no background: R2 | fully bled → CoG/MSR |
+| L+R | — capped below what the subject needs: R2 | (not previously listed) |
 
 All of rows 0–3 live in R1, and none of them reaches route selection. Only the full bleed is
 genuinely different: the subject's box *is* the frame, so there is nowhere legal to put the slack
@@ -312,8 +327,8 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 | Route selection (R1/R2/R3) | `BUILT` |
 | R3 · Fallback | `BUILT` |
 | R1 · Center & Stretch | `BUILT` |
-| R2 · CropSquare | `STUB` — full bleed only |
-| CoG/MSR crop (§6) | `PLANNED` — needed only by R2 now |
+| R2 · CropSquare | `BUILT` — largest centred square |
+| CoG/MSR crop (§6) | `DEFERRED` — R2 crops frame-centred; no image needs saliency yet |
 | Output size envelope | `BUILT` — in the exporter |
 | Save JPEG + ICC | `BUILT` |
 | Single hardened exe, no install | `NOT MET` — see `docs/ARCHITECTURE.md` §5 |
