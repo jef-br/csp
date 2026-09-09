@@ -33,9 +33,10 @@
 //!   cargo run --release --example run_dir -- <input> [output_dir]
 //!   <input> is a folder of images or a single image file.
 //!
-//! Paths (override via env):
-//!   ORT_DYLIB_PATH   ONNX Runtime shared library  (default: ./onnxruntime.dll)
-//!   BIREFNET_ONNX    BiRefNet model               (default: ./birefnet_lite_512.onnx)
+//! Model:
+//!   By default this runs the same weights the exe ships with, embedded at build time. Set
+//!   BIREFNET_ONNX to a path to run a different export instead — that is what this harness is for.
+//!   ORT_DYLIB_PATH overrides the ONNX Runtime library (default: ./onnxruntime.dll).
 
 use csp::core::shot_classifier::geometry::Rect;
 use csp::core::shot_classifier::refine::{RefineParams, RefinementInput};
@@ -54,8 +55,8 @@ fn main() {
     }));
     let output_dir = PathBuf::from(args.next().unwrap_or_else(|| DEFAULT_OUTPUT.into()));
 
+    let model_path = std::env::var("BIREFNET_ONNX").ok();
     let ort_lib = std::env::var("ORT_DYLIB_PATH").unwrap_or_else(|_| "onnxruntime.dll".into());
-    let model_path = std::env::var("BIREFNET_ONNX").unwrap_or_else(|_| "birefnet_lite_512.onnx".into());
 
     let meta = std::fs::metadata(&input)
         .unwrap_or_else(|e| panic!("cannot open {}: {e}", input.display()));
@@ -85,10 +86,18 @@ fn main() {
         }
     }
 
-    eprintln!("loading BiRefNet: {model_path}");
-    eprintln!("onnx runtime:    {ort_lib}");
-    let model = BiRefNetModel::load(&model_path, &ort_lib, BiRefNetConfig::default())
-        .expect("failed to load BiRefNet model");
+    BiRefNetModel::init_runtime(&ort_lib).expect("failed to load ONNX Runtime");
+    let model = match &model_path {
+        Some(path) => {
+            eprintln!("loading BiRefNet from file: {path}");
+            BiRefNetModel::load_from_file(path, BiRefNetConfig::default())
+        }
+        None => {
+            eprintln!("loading the embedded BiRefNet");
+            BiRefNetModel::load(BiRefNetConfig::default())
+        }
+    }
+    .expect("failed to load BiRefNet model");
 
     let mut json_rows: Vec<String> = Vec::new();
     println!("\n{:<44}  {:>10}  {}", "image", "size", "shot code / touches");
