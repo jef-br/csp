@@ -121,3 +121,65 @@ fn refinement_does_not_extend_the_mask_when_the_colour_stops() {
         result.touches_edges
     );
 }
+
+/// Builds a subject meeting the bottom border, with `flare` controlling *how* it meets it.
+///
+/// `flare == 0` gives a straight column — the silhouette a frame truncates, whose coverage is
+/// identical at every depth. A positive `flare` widens the shape by that many pixels per row as it
+/// recedes from the border: the trapezoid a hem makes curving down to kiss the edge. Both reach
+/// row 0 of the bottom band, so only the graze test can tell them apart.
+fn bottom_contact_case(base_w: u32, flare: u32) -> (RgbImage, Mask) {
+    let (w, h) = (200u32, 200u32);
+    let mut image = RgbImage::from_pixel(w, h, Rgb([120, 120, 120]));
+    let mut mask = Mask { width: w, height: h, data: vec![0u8; (w * h) as usize] };
+    for depth in 0..40u32 {
+        let y = h - 1 - depth;
+        let half = (base_w + flare * depth) / 2;
+        for x in (w / 2 - half)..(w / 2 + half) {
+            image.put_pixel(x, y, Rgb([230, 230, 230]));
+            mask.data[(y * w + x) as usize] = 255;
+        }
+    }
+    (image, mask)
+}
+
+#[test]
+fn a_subject_the_frame_truncates_touches_the_border() {
+    let (image, mask) = bottom_contact_case(60, 0);
+    let inst = instance(mask, Rect { x: 70, y: 160, w: 60, h: 40 });
+    let input = RefinementInput { working_image: &image, original_image: &image, instance: &inst };
+
+    let result = classify_instance(&input, 20, RefineParams::default());
+
+    // Coverage is the same at 5px and 20px deep, so the ratio is 1.0 — a real bleed-off.
+    assert!(
+        result.touches_edges.contains(&Edge::Bottom),
+        "a perpendicular contact must count as touching, got {:?}",
+        result.touches_edges
+    );
+}
+
+#[test]
+fn a_subject_that_only_grazes_the_border_does_not_touch_it() {
+    let (image, mask) = bottom_contact_case(20, 4);
+
+    // Guard the point of the test: the mask really does reach the border, so a negative verdict can
+    // only come from the graze test and not from an absence of contact.
+    assert!(
+        (0..200).any(|x| mask.data[(199 * 200 + x) as usize] != 0),
+        "fixture must actually touch the bottom border"
+    );
+
+    let inst = instance(mask, Rect { x: 12, y: 160, w: 176, h: 40 });
+    let input = RefinementInput { working_image: &image, original_image: &image, instance: &inst };
+
+    let result = classify_instance(&input, 20, RefineParams::default());
+
+    // 20px wide at the border but 96px by 20 deep: mean coverage over the narrow band is well under
+    // the wide band's, so the silhouette is running along the edge rather than off it.
+    assert!(
+        !result.touches_edges.contains(&Edge::Bottom),
+        "a grazing contact must not count as touching, got {:?}",
+        result.touches_edges
+    );
+}
