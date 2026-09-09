@@ -4,15 +4,19 @@
 //!
 //! | Route | Verdict | Strategy |
 //! |---|---|---|
-//! | R1 [`Route::CenterAndStretch`] | EIX `0000` — subject touches no edge | crop to a square around the subject, background fills the rest |
-//! | R2 [`Route::CropSquare`] | EIX set and non-zero — subject bleeds off one or more edges | crop into real pixels, anchored on the edges it touches |
+//! | R1 [`Route::CenterAndStretch`] | at least one edge free | square around the subject, blocked edges pinned, background stretched to fill |
+//! | R2 [`Route::CropSquare`] | all four edges bled | no background anywhere to stretch from |
 //! | R3 [`Route::Fallback`] | EIX not set — no verdict at all | fit the whole image into a square canvas |
 //!
-//! **Three routes, six behaviours.** `docs/csp-spec.md` §5's table is not a competing route list —
-//! it is the *inside* of these routes. Its `0 edges` row is R1's strategy; its `1`, `2 opposite`,
-//! `2 adjacent`, `3` and `4` rows are cases [`crop_square`] matches on internally as R2 grows.
-//! Choosing between them is a behaviour, not a routing decision, so it never reaches
-//! [`Route::select`].
+//! **The bleed table lives inside R1.** `docs/csp-spec.md` §5 lists five behaviours for a subject
+//! that reaches an edge — flush to one edge, fill an axis bled at both ends, flush into a shared
+//! corner, fill the boxed-in axis, full bleed. The first four are one rule seen from four angles:
+//! a bled edge is blocked, an axis with a free side takes the margin, and the slack goes to the
+//! free sides. [`center_and_stretch`] applies that rule, so those four never reach
+//! [`Route::select`] as a routing decision at all.
+//!
+//! Only the full bleed is genuinely different, and that is what R2 is left holding: with all four
+//! edges blocked the subject's box is the frame, and there is no background to stretch.
 //!
 //! R3 is not a spec row. It exists because "the model produced no verdict" is a genuinely different
 //! state from "the model looked and found no edge touched" — see [`Route::select`].
@@ -77,9 +81,9 @@ impl<'a> Shot<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
-    /// R1 — the subject stands clear of every edge.
+    /// R1 — the subject leaves at least one edge free.
     CenterAndStretch,
-    /// R2 — the subject reaches at least one edge.
+    /// R2 — the subject bleeds off all four edges.
     CropSquare,
     /// R3 — no classification was produced.
     Fallback,
@@ -88,15 +92,19 @@ pub enum Route {
 impl Route {
     /// Pick the route for a verdict.
     ///
-    /// `None` means the classifier could not produce one — a failed inference, an unusable model
-    /// output. That is deliberately distinct from `Some` with an empty `touches_edges`: the first
-    /// is "we don't know", the second is "we looked, and it touches nothing". They take different
-    /// routes, so a model failure degrades one image instead of silently being processed as a
-    /// clean free-standing shot.
+    /// One free edge is all R1 needs: it gives the square somewhere legal to put its slack, and a
+    /// band of real background to stretch from. So the split is not "touches nothing" against
+    /// "touches something" — it is "has somewhere to grow" against "does not".
+    ///
+    /// `None` means the classifier could not produce a verdict at all — a failed inference, an
+    /// unusable model output. That is deliberately distinct from `Some` with an empty
+    /// `touches_edges`: the first is "we don't know", the second is "we looked, and it touches
+    /// nothing". They take different routes, so a model failure degrades one image instead of
+    /// silently being processed as a clean free-standing shot.
     pub fn select(class: Option<&ShotClassification>) -> Route {
         match class {
             None => Route::Fallback,
-            Some(c) if c.touches_edges.is_empty() => Route::CenterAndStretch,
+            Some(c) if c.touches_edges.len() < 4 => Route::CenterAndStretch,
             Some(_) => Route::CropSquare,
         }
     }
@@ -140,10 +148,22 @@ mod tests {
                 .map(|(_, &e)| e)
                 .collect();
 
-            let expected = if bits == 0 { Route::CenterAndStretch } else { Route::CropSquare };
+            // Everything short of a full bleed leaves R1 an edge to work against; only all four
+            // blocked leaves it with no background anywhere to stretch from.
+            let expected = if bits == 0b1111 { Route::CropSquare } else { Route::CenterAndStretch };
             let got = Route::select(Some(&verdict(&touches)));
             assert_eq!(got, expected, "bits {bits:04b} ({touches:?}) routed to {got:?}");
         }
+    }
+
+    #[test]
+    fn a_full_bleed_is_the_only_verdict_that_leaves_r1() {
+        assert_eq!(Route::select(Some(&verdict(&Edge::ALL))), Route::CropSquare);
+        assert_eq!(
+            Route::select(Some(&verdict(&[Edge::Top, Edge::Bottom, Edge::Left]))),
+            Route::CenterAndStretch,
+            "three blocked edges still leave one free side to take the slack"
+        );
     }
 
     #[test]

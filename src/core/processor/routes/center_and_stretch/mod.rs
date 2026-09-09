@@ -1,14 +1,27 @@
-//! R1 — the subject touches no edge (EIX `0000`).
+//! R1 — the subject reaches at most three edges (EIX `0000` through any three bits).
 //!
-//! The subject stands clear of every border, so there are real background pixels on all sides.
-//! Build a square of `max(bbox_w, bbox_h) * (1 + margin)` centred on the subject ([`plan`]), then
-//! fill whatever it reaches past the image by stretching the background bands outward
-//! ([`compose`]). A side that lands inside the image crops instead — same code, no branch.
+//! Build a square around the subject ([`plan`]), then fill whatever it reaches past the image by
+//! stretching the background bands outward ([`compose`]). A side that lands inside the image crops
+//! instead — same code, no branch.
+//!
+//! ## One rule, not six behaviours
+//!
+//! An edge the subject bleeds off is *blocked*: the square may not move it, because the subject
+//! continues past it and any background put there would be painted over a subject we cannot see.
+//! Everything else follows from that, per axis — an axis with a free side takes the margin, an axis
+//! blocked at both ends takes none, and the slack goes to whichever sides are free.
+//!
+//! That single rule reproduces four of the five bleed behaviours `docs/csp-spec.md` §5 lists
+//! separately: flush to one edge, fill an axis bled at both ends, flush into a shared corner, fill
+//! the boxed-in axis. They were never five behaviours — they are one rule seen from four angles,
+//! which is why they live here rather than in five branches of [`super::crop_square`].
+//!
+//! Only the full bleed stays out. With all four edges blocked the subject's box *is* the frame,
+//! there is no background anywhere to stretch from, and R1 has nothing to work with.
 //!
 //! The subject region is the segmentation mask's own bounding box. **No saliency here**: the
 //! saliency-weighted centre of gravity belongs to [`super::crop_square`], where a fully-bled
-//! subject leaves no background to anchor against. R1 always has real background on all four
-//! sides, so the mask's bbox is enough to place the square.
+//! subject leaves no background to anchor against.
 //!
 //! ## Deliberately not validated
 //!
@@ -26,7 +39,7 @@ use super::super::super::config;
 use super::super::super::preprocessor::Prepared;
 use super::{fallback, Shot};
 use image::RgbImage;
-use plan::SquarePlan;
+use plan::{Pins, SquarePlan};
 
 /// How far outside the mask the background is trusted, in full-resolution pixels.
 ///
@@ -46,7 +59,12 @@ pub fn apply(prep: &Prepared, shot: Shot<'_>) -> RgbImage {
     let Some(subject) = shot.subject_bbox_in(prep) else {
         return fallback::apply(prep);
     };
-    let plan = SquarePlan::new(subject, config::R1_MARGIN);
+    // The edges the subject bleeds off are the ones the square may not move. `None` means no
+    // square can respect them all — R3 frames the image safely rather than R1 guessing.
+    let pins = Pins::from_edges(&shot.class.touches_edges);
+    let Some(plan) = SquarePlan::new(subject, config::R1_MARGIN, pins) else {
+        return fallback::apply(prep);
+    };
     compose::compose(&prep.original, &plan, subject, safety_px(prep))
 }
 

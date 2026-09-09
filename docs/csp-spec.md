@@ -15,7 +15,7 @@ I fold changes back in here.
 - **KPI:** repositioning accuracy at high speed.
 - **Product is never distorted.** Only background is ever stretched.
 - **Real pixels first.** Prefer cropping into the real image over inventing pixels; stretch only when a real-pixel square can't be had.
-- **Max background stretch = 42%** on any side. Past that, it's the "impossible" case → fallback.
+- **Max background stretch = 42%** on any side. `SUSPENDED` — dropped from R1 pending evidence it is needed; if artefacts appear, the answer may be further cleaning, seam carving or inpainting rather than a hard cap.
 - **Output:** 1:1 square, side ∈ [800, 2000] px.
 - **Encode:** JPEG q90–q95, 4:4:4 (no chroma subsampling), embedded sRGB ICC. `BUILT`
 - **Failures** leave the input untouched (never deleted), never crash the batch.
@@ -33,7 +33,7 @@ off that one decision.
 | **B · Preprocess** | Flatten alpha onto white, colour-manage to sRGB, derive the working-resolution copy. | `BUILT` |
 | **C · Classify** | Segment the working copy, then decide per edge whether the subject reaches it. Emits the EIX verdict — or no verdict. | `BUILT` |
 | **D · Dispatch** | EIX verdict → one of three routes (§5). | `BUILT` |
-| **E · Route** | R1/R2 shape the square; R3 frames it safely. | `R3 BUILT` · `R1/R2 STUB` |
+| **E · Route** | R1/R2 shape the square; R3 frames it safely. | `R1 BUILT` · `R3 BUILT` · `R2 STUB` |
 | **F · Export** | Size envelope, then JPEG + ICC, then delete the source on success. | `BUILT` |
 
 "Detect" and "classify outcome" are no longer separate phases. Segmentation produces the mask and
@@ -109,36 +109,71 @@ Three routes, keyed on the edge-intersection (EIX) verdict:
 
 | Route | Verdict | Strategy |
 |---|---|---|
-| **R1** · Center & Stretch | EIX `0000` — reaches no edge | free-standing → CoG/MSR square (§6) |
-| **R2** · CropSquare | EIX set and non-zero | crop into real pixels, anchored on the edges touched |
+| **R1** · Center & Stretch | at least one edge free (EIX `0000`–any three bits) | square around the subject, bled edges pinned, background stretched to fill |
+| **R2** · CropSquare | EIX `1111` — bleeds off all four edges | CoG/MSR square with extension (§6) |
 | **R3** · Fallback | EIX not set — no verdict | whole image, uncropped, centred on a square canvas |
 
-**Three routes, six behaviours.** The table below is not a competing route list — it is the *inside*
-of R1 and R2. Choosing among these is a behaviour, not a routing decision, so it never reaches route
-selection.
+### 5.1 One rule, not six behaviours `REVISED 2026-09-09`
 
-| edges | behaviour | lives in |
+The five bleed behaviours this table used to list separately are one rule with different edges
+pinned. **An edge the subject bleeds off is blocked**: the square may not move it, because the
+subject continues past it and background invented there would be painted over a subject we cannot
+see. Everything else follows, per axis:
+
+- **Size.** An axis with at least one free side needs `extent × (1 + margin)`. An axis blocked at
+  both ends needs exactly `extent` — there is no gap to leave and nothing to leave it with. The
+  square's side is the larger of the two needs.
+- **Placement.** An axis's slack goes to its free sides: split evenly when both are free, all of it
+  to the one that is free otherwise.
+
+| edges | what the rule produces | old wording |
 |---|---|---|
-| 0 | free-standing → CoG/MSR square (§6) | R1 |
-| 1 | flush to that edge, centre the other axis | R2 |
-| 2 opposite | fill that whole axis | R2 |
-| 2 adjacent | flush into the shared corner | R2 |
-| 3 | fill the boxed-in axis | R2 |
-| 4 | fully bled → CoG/MSR square with extension (§6) | R2 |
+| 0 | both axes take the margin, both split it evenly | free-standing |
+| 1 | that edge pinned, the whole margin on the opposite side | flush to that edge, centre the other axis |
+| 2 opposite | that axis takes no margin and fills exactly | fill that whole axis |
+| 2 adjacent | both pinned, slack onto the two free sides | flush into the shared corner |
+| 3 | slack entirely onto the one free side | fill the boxed-in axis |
+| 4 | — no free side, no background: R2 | fully bled → CoG/MSR |
+
+All of rows 0–3 live in R1, and none of them reaches route selection. Only the full bleed is
+genuinely different: the subject's box *is* the frame, so there is nowhere legal to put the slack
+*and* no background band anywhere to stretch from. Both of R1's mechanisms fail at once, which is
+what makes R2 a route rather than a branch.
+
+**Worked example — 28.jpg.** 667×1000, model with the head cut off at the top, EIX `1000`.
+The mask measures 474×986 flush against the top edge.
+
+```
+vertical need   = 986 × 1.042 = 1027    # bottom is free, so the axis takes the margin
+horizontal need = 474 × 1.042 =  494
+side            = 1027
+```
+
+Top pinned at y=0, so all 41px of vertical slack lands under the feet: 13px of real floor already
+in frame plus 28px of new canvas, stretched from the band below her feet. Horizontally the square
+is centred on the mask and overhangs both sides, filled from the studio paper. The cut-off head is
+reproduced exactly — never stretched, never cropped.
+
+**Impossible case.** An axis blocked at both ends whose square still comes up short — a wide
+subject bleeding off the top and bottom of a shallow frame. Neither vertical side may move and the
+slack has nowhere legal to go, so R1 declines and the image falls to R3.
+
+> **Data note.** The old analyzers collapsed 113 of 116 CiMini images to "0 edges". Re-measured over
+> 112 images with segmentation: **84** touch 0 edges, **12** touch 1, **12** touch 2, **2** touch 3,
+> **2** touch 4. So R1 now covers 110 of 112, and R2's remaining case is the 2 full bleeds.
 
 R3 has no row here. It is the answer to "we don't know", and it exists because a model failure must
 not be silently processed as a clean free-standing shot.
 
-> **Data note.** The old analyzers collapsed 113 of 116 CiMini images to "0 edges". Re-measured over
-> 112 images with segmentation: **84** touch 0 edges, **12** touch 1, **12** touch 2, **2** touch 3,
-> **2** touch 4. The 3-edge branch, which previously had no example anywhere, now has two.
+## 6 · Crop & compose — CoG / MSR square `R2 ONLY`
 
----
+**Scope narrowed 2026-09-09.** R1 no longer uses any of this: it anchors on the mask's bounding
+box, pins bled edges and stretches background to fill (§5.1). What follows is R2's machinery — the
+full bleed, where the subject's box is the frame and there is no background left to anchor against,
+so saliency is the only signal remaining.
 
-## 6 · Crop & compose — CoG / MSR square `REDESIGN`
-
-Replaces the naive "box + margin, stretch if it overflows". Anchors the square on where the
-salient mass actually sits, prefers real pixels, and only stretches background within the 42% cap.
+Anchors the square on where the salient mass actually sits, prefers real pixels, and only stretches
+background within the 42% cap.
 
 ### 6.1 Terms
 
@@ -243,8 +278,9 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
   verdict. The SLIC / geodesic / CLAHE / Otsu machinery is deleted, not paused.
 - **"No verdict" is a first-class outcome**, distinct from "touches no edge". It routes to R3.
 - Working size ≤1024; boundaries always confirmed at full resolution.
-- Crop is CoG/MSR-anchored, real-pixels-first, ≤42% stretch. (§6, unchanged.)
-- Three routes, six behaviours: the edge table lives *inside* R1 and R2, never above them.
+- R1 is bbox-anchored: square = longest mask side + 4.2%, bled edges pinned, background stretched to fill. No saliency, no clipping of the subject, and the 42% cap suspended.
+- CoG/MSR (§6) is R2's machinery now — the full bleed is the only case with no background to anchor against.
+- Three routes, one bleed rule: pin the bled edges, margin the free ones. Rows 0-3 of the old edge table are that rule seen from four angles and all live in R1; only the full bleed is left to R2.
 - Output 1:1 [800,2000], JPEG q90–95 4:4:4 sRGB. The envelope is enforced in the exporter — which
   every route ends at — so no route can bypass it.
 - Ships as one hardened exe with no install. Currently unmet: ONNX Runtime and the model sit beside
@@ -254,12 +290,12 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 
 ## 9 · Open questions
 
-- **Q1** · `LOSS_MAX` value (§6.4 ①).
+- **Q1** · `LOSS_MAX` value (§6.4 ①) — R2 only now; R1 never clips the subject.
 - **Q2** · CoG definition — saliency-weighted centroid confirmed? (§6.4 ②)
 - **Q3** · ~~SC output contract~~ — **answered**, see §3.2.
 - **Q4** · ~~SLIC patch count~~ — **moot**, SLIC is gone.
 - **Q5** · Human detector interface — what signal it returns and how §6 consumes it (Phase 2).
-- **Q6** · R2's five behaviours (§5) each need implementing, and each needs its own acceptance case.
+- **Q6** · ~~R2's five behaviours~~ — **answered**: four of them are one rule and live in R1 (§5.1). R2 is left with the full bleed.
 - **Q7** · Small-source policy. The envelope upscales anything under 800px with no cap; the old
   whole-image 1.42× cap is gone. Decide whether small sources should be capped, padded, or refused.
 
@@ -275,9 +311,9 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 | Edge intersections | `BUILT` |
 | Route selection (R1/R2/R3) | `BUILT` |
 | R3 · Fallback | `BUILT` |
-| R1 · Center & Stretch | `STUB` |
-| R2 · CropSquare | `STUB` |
-| CoG/MSR crop (§6) | `PLANNED` — lands with R1 |
+| R1 · Center & Stretch | `BUILT` |
+| R2 · CropSquare | `STUB` — full bleed only |
+| CoG/MSR crop (§6) | `PLANNED` — needed only by R2 now |
 | Output size envelope | `BUILT` — in the exporter |
 | Save JPEG + ICC | `BUILT` |
 | Single hardened exe, no install | `NOT MET` — see `docs/ARCHITECTURE.md` §5 |

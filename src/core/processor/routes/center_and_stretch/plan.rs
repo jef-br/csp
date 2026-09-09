@@ -1,15 +1,48 @@
 //! R1 step 1 — where the square goes.
 //!
-//! Pure geometry, no pixels. The square's side comes from the subject box alone
-//! (`max(w, h) * (1 + margin)`), and it is centred on that box: the product ends up in the middle
-//! of the output whatever the source framing was, which is the whole point of R1.
+//! Pure geometry, no pixels. Two rules, one per axis:
+//!
+//! * **Size.** An axis with at least one free side needs `extent * (1 + margin)`. An axis blocked
+//!   on both sides needs exactly `extent` — the subject runs off the frame at both ends, so there
+//!   is no gap to leave and nothing to leave it with. The square's side is the larger of the two
+//!   needs, so the tighter axis decides.
+//! * **Placement.** The slack on each axis goes to that axis's free sides: split between them when
+//!   both are free, all of it to the one that is free otherwise. A blocked side never moves —
+//!   the subject continues past it, and background invented there would be background painted over
+//!   a subject we cannot see.
+//!
+//! A 0-edge subject is the degenerate case of this, not a separate one: four free sides, so both
+//! axes take the full margin and both split it evenly.
 //!
 //! Deriving the side from the subject rather than from the image is what makes the square able to
 //! reach past a border. That is not a failure mode — it is the case R1 exists for. A side that
-//! lands inside the image on some axis simply crops there; a side that reaches past it leaves an
-//! [`Overhang`] for the fill to cover.
+//! lands inside the image simply crops there; a side that reaches past it leaves an [`Overhang`]
+//! for the fill to cover.
 
-use crate::core::shot_classifier::geometry::Rect;
+use crate::core::shot_classifier::{geometry::Rect, Edge};
+
+/// Which sides the subject runs off the frame at, and therefore may not be moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Pins {
+    pub top: bool,
+    pub bottom: bool,
+    pub left: bool,
+    pub right: bool,
+}
+
+impl Pins {
+    /// Nothing blocked — the free-standing subject R1 was first written for.
+    pub const NONE: Pins = Pins { top: false, bottom: false, left: false, right: false };
+
+    pub fn from_edges(edges: &[Edge]) -> Pins {
+        Pins {
+            top: edges.contains(&Edge::Top),
+            bottom: edges.contains(&Edge::Bottom),
+            left: edges.contains(&Edge::Left),
+            right: edges.contains(&Edge::Right),
+        }
+    }
+}
 
 /// The output square, in the *original* image's coordinate space.
 ///
@@ -33,22 +66,26 @@ pub struct Overhang {
 }
 
 impl SquarePlan {
-    /// Square of `max(w, h) * (1 + margin)`, centred on `subject`.
-    pub fn new(subject: Rect, margin: f32) -> SquarePlan {
-        let longest = subject.w.max(subject.h) as f64;
-        let side = (longest * (1.0 + margin as f64)).round().max(1.0) as u32;
+    /// Size the square and place it, given which sides are blocked.
+    ///
+    /// `None` when an axis is blocked at both ends and still comes up short — the *other* axis
+    /// demanded a bigger square, and there is nowhere legal to put the difference. Growing a
+    /// blocked axis means inventing background on top of a subject that continues off-frame, and
+    /// splitting the difference anyway would stretch the product. R1 has no answer, so it says so
+    /// and the caller frames the image safely instead.
+    pub fn new(subject: Rect, margin: f32, pins: Pins) -> Option<SquarePlan> {
+        let need = |extent: u32, blocked_both: bool| {
+            let m = if blocked_both { 0.0 } else { margin as f64 };
+            extent as f64 * (1.0 + m)
+        };
+        let side = need(subject.h, pins.top && pins.bottom)
+            .max(need(subject.w, pins.left && pins.right))
+            .round()
+            .max(1.0) as u32;
 
-        // Centre in half-pixel units, so an odd-sized box is not biased one way by an early
-        // division. `div_euclid` rounds toward negative infinity, which keeps the bias consistent
-        // on the axes where the origin goes negative.
-        let cx2 = 2 * subject.x as i64 + subject.w as i64;
-        let cy2 = 2 * subject.y as i64 + subject.h as i64;
-
-        SquarePlan {
-            side,
-            x: (cx2 - side as i64).div_euclid(2),
-            y: (cy2 - side as i64).div_euclid(2),
-        }
+        let y = origin(subject.y, subject.h, side, pins.top, pins.bottom)?;
+        let x = origin(subject.x, subject.w, side, pins.left, pins.right)?;
+        Some(SquarePlan { side, x, y })
     }
 
     /// The part of the square that lands on real pixels, in original-image coordinates.
@@ -79,6 +116,22 @@ impl SquarePlan {
     }
 }
 
+/// Where the square starts on one axis: the subject's own start, less whatever share of the slack
+/// the low side is entitled to.
+///
+/// Rounding on an even split matches what the original centred-only code did, so a free-standing
+/// subject lands on exactly the pixel it always has.
+fn origin(start: u32, extent: u32, side: u32, pin_lo: bool, pin_hi: bool) -> Option<i64> {
+    let slack = side as i64 - extent as i64;
+    let gap_lo = match (pin_lo, pin_hi) {
+        (true, _) => 0,
+        (false, true) => slack,
+        (false, false) => slack.div_euclid(2) + slack.rem_euclid(2),
+    };
+    // Both ends blocked and the square still wants to grow: no legal home for the slack.
+    (!(pin_lo && pin_hi) || slack == 0).then(|| start as i64 - gap_lo)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,44 +141,38 @@ mod tests {
         Rect { x, y, w, h }
     }
 
+    fn plan(subject: Rect, pins: Pins) -> SquarePlan {
+        SquarePlan::new(subject, R1_MARGIN, pins).expect("a legal square")
+    }
+
     #[test]
     fn side_is_the_longest_bbox_edge_plus_margin() {
         // Portrait subject: height decides, width follows it into a square.
-        let plan = SquarePlan::new(rect(100, 30, 1300, 1670), R1_MARGIN);
-        assert_eq!(plan.side, 1740); // 1670 * 1.042 = 1740.1
+        assert_eq!(plan(rect(100, 30, 1300, 1670), Pins::NONE).side, 1740); // 1670 * 1.042
     }
 
     #[test]
     fn the_square_is_centred_on_the_subject() {
         // Subject centre is (750, 865); a 1740 square centred there starts at -120, -5.
-        let plan = SquarePlan::new(rect(100, 30, 1300, 1670), R1_MARGIN);
-        assert_eq!((plan.x, plan.y), (-120, -5));
-
-        // Centring is on the subject, never on the image: the same box in a much wider frame
-        // produces the same origin.
-        let same = SquarePlan::new(rect(100, 30, 1300, 1670), R1_MARGIN);
-        assert_eq!(plan, same);
+        let p = plan(rect(100, 30, 1300, 1670), Pins::NONE);
+        assert_eq!((p.x, p.y), (-120, -5));
     }
 
     #[test]
     fn overhang_is_per_side_and_zero_where_real_pixels_reach() {
         // The worked case: 1500x2000 source. Left and right reach past the frame, the top by a
         // hair, and the bottom lands 265px inside it — so the bottom crops rather than stretches.
-        let plan = SquarePlan::new(rect(100, 30, 1300, 1670), R1_MARGIN);
-        assert_eq!(
-            plan.overhang(1500, 2000),
-            Overhang { top: 5, bottom: 0, left: 120, right: 120 }
-        );
+        let p = plan(rect(100, 30, 1300, 1670), Pins::NONE);
+        assert_eq!(p.overhang(1500, 2000), Overhang { top: 5, bottom: 0, left: 120, right: 120 });
     }
 
     #[test]
     fn a_square_inside_the_image_has_no_overhang_and_crops() {
-        // Small subject in a big frame: every side lands on real pixels.
-        let plan = SquarePlan::new(rect(400, 400, 200, 200), R1_MARGIN);
-        assert_eq!(plan.side, 208);
-        assert_eq!(plan.overhang(1000, 1000), Overhang::default());
+        let p = plan(rect(400, 400, 200, 200), Pins::NONE);
+        assert_eq!(p.side, 208);
+        assert_eq!(p.overhang(1000, 1000), Overhang::default());
         assert_eq!(
-            plan.real_region(1000, 1000),
+            p.real_region(1000, 1000),
             Some(rect(396, 396, 208, 208)),
             "the whole square is real pixels, so the region is the square itself"
         );
@@ -133,24 +180,64 @@ mod tests {
 
     #[test]
     fn a_subject_filling_the_frame_overhangs_on_all_four_sides() {
-        // No 42% cap on this: the fill is best-effort by design, and a subject this tight is
-        // exactly the case that needs stretching on every side.
-        let plan = SquarePlan::new(rect(0, 0, 1000, 1000), R1_MARGIN);
-        assert_eq!(plan.side, 1042);
-        let over = plan.overhang(1000, 1000);
-        assert_eq!(over, Overhang { top: 21, bottom: 21, left: 21, right: 21 });
-        assert_eq!(plan.real_region(1000, 1000), Some(rect(0, 0, 1000, 1000)));
+        // Free-standing but tight: no cap on the stretch, by decision.
+        let p = plan(rect(0, 0, 1000, 1000), Pins::NONE);
+        assert_eq!(p.side, 1042);
+        assert_eq!(p.overhang(1000, 1000), Overhang { top: 21, bottom: 21, left: 21, right: 21 });
+    }
+
+    #[test]
+    fn one_blocked_side_keeps_the_margin_and_moves_all_of_it_to_the_free_side() {
+        // 28.jpg: 667x1000 frame, mask 474x987 flush against the top.
+        let p = plan(rect(106, 0, 474, 987), Pins { top: true, ..Pins::NONE });
+        assert_eq!(p.side, 1028, "987 * 1.042 — a blocked side does not cost the margin");
+        assert_eq!(p.y, 0, "the blocked top does not move");
+
+        // All 41px of slack lands under the feet. 13 of them are real floor already in frame;
+        // the other 28 are new canvas the fill has to cover.
+        let over = p.overhang(667, 1000);
+        assert_eq!(over.top, 0, "nothing is ever invented above a subject that continues off-frame");
+        assert_eq!(over.bottom, 28);
+    }
+
+    #[test]
+    fn an_axis_blocked_at_both_ends_gets_no_margin() {
+        // EIX 1010 on a 640x840 frame: the subject runs off the top and the bottom, so the
+        // vertical axis needs 840 flat rather than 840 * 1.042, and the square is 840.
+        let p = plan(rect(60, 0, 520, 840), Pins { top: true, bottom: true, ..Pins::NONE });
+        assert_eq!(p.side, 840);
+        assert_eq!(p.y, 0);
+        assert_eq!(p.overhang(640, 840), Overhang { top: 0, bottom: 0, left: 100, right: 100 });
+    }
+
+    #[test]
+    fn three_blocked_sides_push_all_the_slack_onto_the_one_that_is_free() {
+        // Top, bottom and left blocked: the square fills the vertical axis, and the width it is
+        // short lands entirely on the right.
+        let p = plan(rect(0, 0, 300, 500), Pins { top: true, bottom: true, left: true, right: false });
+        assert_eq!(p.side, 500);
+        assert_eq!((p.x, p.y), (0, 0), "both blocked corners hold");
+        assert_eq!(p.overhang(400, 500).right, 100);
+    }
+
+    #[test]
+    fn a_blocked_axis_that_still_comes_up_short_has_no_answer() {
+        // Wide subject bleeding off the top and bottom of a shallow frame: the width demands a
+        // square taller than the image, and neither vertical side may move. Inventing background
+        // there would paint over a subject that continues off-frame.
+        assert!(
+            SquarePlan::new(rect(0, 0, 900, 400), R1_MARGIN, Pins { top: true, bottom: true, ..Pins::NONE }).is_none()
+        );
     }
 
     #[test]
     fn real_region_clips_to_the_image_on_every_side() {
-        let plan = SquarePlan { side: 100, x: -30, y: 950 };
-        assert_eq!(plan.real_region(200, 1000), Some(rect(0, 950, 70, 50)));
+        let p = SquarePlan { side: 100, x: -30, y: 950 };
+        assert_eq!(p.real_region(200, 1000), Some(rect(0, 950, 70, 50)));
     }
 
     #[test]
     fn a_square_that_misses_the_image_has_no_real_region() {
-        let plan = SquarePlan { side: 10, x: -50, y: 0 };
-        assert!(plan.real_region(200, 200).is_none());
+        assert!(SquarePlan { side: 10, x: -50, y: 0 }.real_region(200, 200).is_none());
     }
 }
