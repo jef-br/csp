@@ -10,11 +10,14 @@
 //! subject leaves no background to anchor against. R1 always has real background on all four
 //! sides, so the mask's bbox is enough to place the square.
 //!
-//! ## Not finished
+//! ## Deliberately not validated
 //!
-//! The background is taken as trustworthy from `safety_px` outside the mask to the border. Two
-//! validations of that band are still to come: trimming a flat, artificial background run off the
-//! outer end, and advancing the inner end past a cast shadow the mask does not cover.
+//! The background band is taken as trustworthy from `safety_px` outside the mask all the way to
+//! the border. Two validations of it were designed and then *deferred*, not forgotten: trimming a
+//! flat, artificial background run off the outer end, and advancing the inner end past a cast
+//! shadow the mask does not cover. Plain resampling of the whole band proved good enough on the
+//! test set, so neither is worth its complexity until an image argues otherwise. The argument will
+//! look like a smeared shadow, or a stretched band of the wrong colour along one side.
 
 pub mod compose;
 pub mod plan;
