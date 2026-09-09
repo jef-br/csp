@@ -8,15 +8,15 @@
 //! the segmentation mask (background = inverse mask, foreground = mask).
 //!
 //! Partial — a background-type (`BG`) tag is still to come. Until then,
-//! `full_bleed` flags the case that tag would cover — a tiny mask with no
-//! uniform background, i.e. a probable full-bleed close-up — as
-//! *information only*. `eix` always reports the classifier's real verdict:
+//! `mask_too_small` reports the case that tag would cover — a mask covering too
+//! little of the frame to be a subject — as *information only*.
+//! `eix` always reports the classifier's real verdict:
 //! a tag must never claim an edge intersection the pipeline didn't actually
 //! route on. Routing (`processor::routes::Route::select`) reads only
 //! `touches_edges`, never this heuristic, so letting it override `eix` would
 //! make the tag lie about what the pipeline did with the image.
 
-use super::super::config::FULL_BLEED_MAX_FG;
+use super::super::config::MASK_MIN_COVERAGE;
 use super::{Edge, Mask, ShotClassification};
 use image::RgbImage;
 use std::collections::HashSet;
@@ -34,7 +34,7 @@ pub const NO_VERDICT_EIX: &str = "____";
 /// The derived shot code for one classified image.
 pub struct ShotCode {
     /// 4-bit TRBL edge-intersection string, always the classifier's real
-    /// verdict — never touched by `full_bleed` (see the module doc).
+    /// verdict — never touched by `mask_too_small` (see the module doc).
     pub eix: String,
     /// Background colour as `rrggbb`, when one colour dominates the
     /// background region.
@@ -42,9 +42,8 @@ pub struct ShotCode {
     /// Foreground colour as `rrggbb`, when the subject is big enough to
     /// sample.
     pub fgc: Option<String>,
-    /// Informational: a tiny mask with no uniform background, i.e. a
-    /// probable full-bleed close-up. Does not affect `eix`.
-    pub full_bleed: bool,
+    /// The mask covers too little of the frame to be a subject. Does not affect `eix`.
+    pub mask_too_small: bool,
 }
 
 impl ShotCode {
@@ -72,23 +71,25 @@ pub fn derive(working: &RgbImage, mask: &Mask, class: &ShotClassification) -> Sh
 
     // Read off the verdict rather than recomputed here, so the tag and the route can never
     // disagree about whether this mask was believed.
-    ShotCode { eix, bgc, fgc, full_bleed: class.full_bleed }
+    ShotCode { eix, bgc, fgc, mask_too_small: class.mask_too_small }
 }
 
-/// Is this mask too small to be believed?
+/// Does the mask cover too little of the frame to be a subject?
 ///
-/// True when it covers less than [`FULL_BLEED_MAX_FG`] of the frame *and* no uniform background
-/// was found. Both halves matter. Small on its own is fine — a ring on white paper is a small mask
-/// and a perfectly good subject; the uniform background is what proves the segmenter found the
-/// product rather than a fleck of it. Small *with nowhere to sit* is the close-up case, where the
-/// frame is already all product and the segmenter latched onto the highest-contrast detail in it.
-pub fn is_full_bleed(working: &RgbImage, mask: &Mask) -> bool {
+/// One measurement, deliberately: the share of the frame the mask covers, against
+/// [`MASK_MIN_COVERAGE`]. Nothing about *why* it is small — the two images this catches are
+/// close-ups where the frame was already all product and the segmenter latched onto the
+/// highest-contrast detail in it, but the route does not need that story to be true, only that
+/// there is no subject here worth framing around.
+///
+/// A second condition — "and no uniform background was found" — was measured and left out. It is
+/// the only thing that would tell a genuinely small product on clean paper, jewellery being the
+/// obvious case, from this. Across the 37-image set the two rules flag exactly the same images, so
+/// it earns nothing yet; add it back against a picture that needs it.
+pub fn mask_too_small(working: &RgbImage, mask: &Mask) -> bool {
     let fg = mask.data.iter().filter(|&&v| v > 0).count();
     let total = (working.width() as usize * working.height() as usize).max(1);
-    if fg as f64 / total as f64 >= FULL_BLEED_MAX_FG {
-        return false;
-    }
-    shot_colors(working, mask).bgc.is_none()
+    (fg as f64 / total as f64) < MASK_MIN_COVERAGE
 }
 
 /// 4-bit edge-intersection string in fixed TRBL order.
@@ -265,7 +266,7 @@ mod tests {
             eix: "0110".into(),
             bgc: None,
             fgc: None,
-            full_bleed: false,
+            mask_too_small: false,
         };
         assert_eq!(code.tags(), "--EIX=0110");
 
@@ -277,43 +278,38 @@ mod tests {
     }
 
     #[test]
-    fn a_tiny_mask_with_no_background_is_a_full_bleed() {
-        // A noisy image so no single colour dominates the background, and an almost-empty mask.
-        // This is 6 and 30 in miniature: the segmenter marked next to nothing, and there is no
-        // clean backdrop to argue it was a small product photographed well.
-        let mut img = RgbImage::new(40, 40);
-        for (i, px) in img.pixels_mut().enumerate() {
-            let v = (i as u32 * 37 % 256) as u8;
-            *px = image::Rgb([v, v.wrapping_add(80), v.wrapping_add(160)]);
-        }
-        let mask = Mask { width: 40, height: 40, data: vec![0; 40 * 40] };
-        assert!(is_full_bleed(&img, &mask));
+    fn an_almost_empty_mask_is_too_small() {
+        // 6 in miniature: the segmenter marked next to nothing.
+        let img = RgbImage::from_pixel(40, 40, image::Rgb([200, 200, 200]));
+        let mut mask = Mask { width: 40, height: 40, data: vec![0; 40 * 40] };
+        mask.data[20 * 40 + 20] = 255;
+        assert!(mask_too_small(&img, &mask));
     }
 
     #[test]
-    fn a_tiny_mask_on_clean_paper_is_not() {
-        // The case the background half of the rule protects: a ring on white paper is a small
-        // mask and a perfectly good subject. Size alone must never condemn it.
+    fn a_mask_over_the_floor_is_kept_however_plain_the_backdrop() {
+        // Coverage is the whole test — the backdrop plays no part in it. 10% of the frame, which
+        // sits between 30's 4.4% and the 13.5% of the smallest mask that framed correctly.
         let img = RgbImage::from_pixel(100, 100, image::Rgb([255, 255, 255]));
         let mut mask = Mask { width: 100, height: 100, data: vec![0; 100 * 100] };
-        for y in 48..52 {
-            for x in 48..52 {
+        for y in 45..55 {
+            for x in 0..100 {
                 mask.data[y * 100 + x] = 255;
             }
         }
-        assert!(!is_full_bleed(&img, &mask), "0.16% of the frame, but the backdrop is clean");
+        assert!(!mask_too_small(&img, &mask));
     }
 
     #[test]
     fn the_tag_reports_the_verdict_it_was_given_and_never_touches_eix() {
-        // `full_bleed` comes off the classification, so the tag and the route cannot disagree.
+        // `mask_too_small` comes off the classification, so the tag and the route cannot disagree.
         // `eix` stays the real verdict regardless (see the module doc).
         let img = RgbImage::from_pixel(40, 40, image::Rgb([255, 255, 255]));
         let mask = Mask { width: 40, height: 40, data: vec![0; 40 * 40] };
-        let class = ShotClassification { full_bleed: true, ..Default::default() };
+        let class = ShotClassification { mask_too_small: true, ..Default::default() };
 
         let code = derive(&img, &mask, &class);
-        assert!(code.full_bleed);
+        assert!(code.mask_too_small);
         assert_eq!(code.eix, "0000");
     }
 
@@ -325,7 +321,7 @@ mod tests {
         let mask = Mask { width: 40, height: 40, data: vec![0; 40 * 40] };
         let code = derive(&img, &mask, &ShotClassification::default());
 
-        assert!(!code.full_bleed);
+        assert!(!code.mask_too_small);
         assert_eq!(code.eix, "0000");
         assert_eq!(code.bgc.as_deref(), Some("ffffff"));
     }

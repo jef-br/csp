@@ -41,13 +41,12 @@ pub use segmentation::{Instance, Mask, SegmentationModel};
 #[derive(Debug, Clone, Default)]
 pub struct ShotClassification {
     pub touches_edges: Vec<Edge>,
-    /// The mask covers almost nothing and has no uniform background to sit against, so it
-    /// describes a detail of a close-up rather than a subject — see [`shotcode::is_full_bleed`].
+    /// The mask covers too little of the frame to be a subject — see [`shotcode::mask_too_small`].
     ///
     /// Measured here, next to the mask it is measured from, and consumed in two places: routing
-    /// declines to crop to a mask it does not believe, and the debug tag reports it. Neither
-    /// recomputes it, so the tag can never disagree with the route.
-    pub full_bleed: bool,
+    /// sends it to the route that crops rather than the one that frames, and the debug tag reports
+    /// it. Neither recomputes it, so the tag can never disagree with the route.
+    pub mask_too_small: bool,
     /// Per-edge refinement detail, for edges pass 1 flagged as worth
     /// checking — useful for logging or visual export even when the
     /// verdict came back "not touching".
@@ -71,7 +70,7 @@ pub fn classify_instance(input: &RefinementInput, gate_margin_px: u32, params: R
 
     ShotClassification {
         touches_edges,
-        full_bleed: shotcode::is_full_bleed(input.working_image, &input.instance.mask),
+        mask_too_small: shotcode::mask_too_small(input.working_image, &input.instance.mask),
         refinements,
     }
 }

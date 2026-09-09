@@ -15,7 +15,7 @@
 //! Shot code (partial — BG type comes later):
 //!   EIX  edge intersection, 4-bit TRBL (top-right-bottom-left). `1000`
 //!        = top only, `0110` = right+bottom, `0000` = no intersection.
-//!        Always the classifier's real verdict — a `full_bleed` flag
+//!        Always the classifier's real verdict — a `mask_too_small` flag
 //!        (probable full-bleed close-up: tiny mask, no uniform background)
 //!        is reported separately (console/JSON) and never overrides it.
 //!   BGC  background colour: dominant colour of the inverse BiRefNet
@@ -133,7 +133,7 @@ fn main() {
 
         // --- shot code: BGC/FGC from the mask, EIX from the verdict (shared with the pipeline) ---
         let sc = shotcode::derive(&image, &inst.mask, &result);
-        let ShotCode { eix, bgc, fgc, full_bleed } = &sc;
+        let ShotCode { eix, bgc, fgc, mask_too_small } = &sc;
         let fg_ratio = fg as f64 / total as f64;
 
         let edges: Vec<&str> = result.touches_edges.iter().map(edge_name).collect();
@@ -146,7 +146,7 @@ fn main() {
         println!(
             "{file_name:<44}  {:>10}  {code}   [{verdict}{}]",
             format!("{}x{}", image.width(), image.height()),
-            if *full_bleed { " · full-bleed" } else { "" },
+            if *mask_too_small { " · full-bleed" } else { "" },
         );
         for r in &result.refinements {
             println!("    gate flagged {:<6} -> refined: touching={}", edge_name(&r.edge), r.touching);
@@ -190,13 +190,13 @@ fn main() {
         let opt_str = |o: &Option<String>| o.as_deref().map(|s| format!("{s:?}")).unwrap_or_else(|| "null".into());
         json_rows.push(format!(
             "  {{\"image\":{:?},\"width\":{},\"height\":{},\"foreground_ratio\":{:.4},\
-             \"eix\":{:?},\"full_bleed\":{},\"bgc\":{},\"fgc\":{},\"touches_edges\":[{}],\"gate\":[{}]}}",
+             \"eix\":{:?},\"mask_too_small\":{},\"bgc\":{},\"fgc\":{},\"touches_edges\":[{}],\"gate\":[{}]}}",
             file_name,
             image.width(),
             image.height(),
             fg_ratio,
             eix,
-            full_bleed,
+            mask_too_small,
             opt_str(bgc),
             opt_str(fgc),
             edges.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>().join(","),
