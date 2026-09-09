@@ -83,7 +83,7 @@ impl<'a, G: Grid> Grid for EdgeView<'a, G> {
 }
 
 /// An axis-aligned pixel rectangle, `[x, x+w) x [y, y+h)`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
     pub x: u32,
     pub y: u32,
