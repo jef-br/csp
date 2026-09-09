@@ -68,9 +68,9 @@ fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
     static MODEL: OnceLock<Result<BiRefNetModel, String>> = OnceLock::new();
     MODEL
         .get_or_init(|| {
-            let model_path = sidecar("BIREFNET_ONNX", "birefnet_lite_512.onnx");
-            let dylib_path = sidecar("ORT_DYLIB_PATH", "onnxruntime.dll");
-            BiRefNetModel::load(&model_path, &dylib_path, BiRefNetConfig::default())
+            // The weights are embedded; only the runtime still comes from beside the exe.
+            BiRefNetModel::init_runtime(sidecar("ORT_DYLIB_PATH", "onnxruntime.dll"))?;
+            BiRefNetModel::load(BiRefNetConfig::default())
         })
         .as_ref()
         .map_err(|e| e.clone())
@@ -78,11 +78,13 @@ fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
 
 /// Check the classifier can actually run, before any image is touched.
 ///
-/// A missing ONNX Runtime or model is an environment fault, not an image outcome: it should stop
-/// the run loudly rather than quietly sending every image down the no-verdict route. R3 is for
-/// images the classifier looked at and could not judge — not for a broken install.
+/// The weights are embedded now, so the only file this can fail to find is `onnxruntime.dll`.
+/// That, or a session that will not build, is an environment fault rather than an image outcome:
+/// it should stop the run loudly rather than quietly sending every image down the no-verdict
+/// route. R3 is for images the classifier looked at and could not judge — not for a broken build.
 ///
-/// Callers run this once at startup and abort on `Err`.
+/// Callers run this once at startup and abort on `Err`. It doubles as the point where the ~180MB
+/// session is paid for, off the batch's critical path.
 pub fn preflight() -> Result<(), String> {
     model()?;
     Ok(())
@@ -90,6 +92,9 @@ pub fn preflight() -> Result<(), String> {
 
 /// Resolve a file shipped alongside the executable: `$var` if set, else `<exe dir>/<name>`, else
 /// the bare name relative to the working directory.
+///
+/// One caller left — `onnxruntime.dll`. The model used to come through here too, and no longer
+/// does; this whole function goes when the runtime is linked in.
 fn sidecar(var: &str, name: &str) -> std::path::PathBuf {
     if let Some(p) = std::env::var_os(var) {
         return std::path::PathBuf::from(p);

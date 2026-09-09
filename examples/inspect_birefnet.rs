@@ -1,14 +1,17 @@
-//! Prints the BiRefNet ONNX model's input/output tensor names and shapes.
+//! Prints a BiRefNet ONNX model's input/output tensor names and shapes.
 //!
-//! Paths (override via env):
+//! Inspects a model *file*, so it can be pointed at an export that is not the embedded one — a
+//! re-quantized model, a different side.
+//!
 //!   ORT_DYLIB_PATH   ONNX Runtime shared library (default: ./onnxruntime.dll)
-//!   BIREFNET_ONNX    BiRefNet model (default: ./birefnet_lite.onnx)
+//!   BIREFNET_ONNX    BiRefNet model to inspect   (default: ./birefnet_lite_512.onnx)
 
 use ort::session::Session;
 
 fn main() -> ort::Result<()> {
     let ort_lib = std::env::var("ORT_DYLIB_PATH").unwrap_or_else(|_| "onnxruntime.dll".into());
-    let model_path = std::env::var("BIREFNET_ONNX").unwrap_or_else(|_| "birefnet_lite.onnx".into());
+    let model_path =
+        std::env::var("BIREFNET_ONNX").unwrap_or_else(|_| "birefnet_lite_512.onnx".into());
 
     ort::init_from(ort_lib).commit()?;
     let session = Session::builder()?.commit_from_file(model_path)?;

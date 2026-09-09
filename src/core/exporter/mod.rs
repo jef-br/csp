@@ -8,18 +8,17 @@
 //! ## Debug tags (`CSP_DEBUG_TAGS` marker file)
 //!
 //! Off by default — the shipped exe writes a clean `<stem>.jpg`. Turned on by a file named
-//! `CSP_DEBUG_TAGS` sitting next to the executable — no shell, no environment variable: the same
-//! sidecar convention `core::sidecar` already uses to find `onnxruntime.dll`/the `.onnx` model.
-//! The file's content is ignored; only its presence matters. Delete it, or the exe, to turn tagging
-//! back off.
+//! `CSP_DEBUG_TAGS` sitting next to the executable — no shell, no environment variable, because
+//! CSP ships as one file with nothing to configure. The file's content is ignored; only its
+//! presence matters. Delete it to turn tagging back off. This marker is the *only* thing CSP ever
+//! looks for beside the exe; the runtime and the weights are inside it.
 //!
 //! When on, each output is renamed `<stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]` from the shot
 //! classifier's verdict, with the working-resolution segmentation mask written alongside as
 //! `<stem>_segmask.png`. When the classifier produced no verdict the name carries `EIX=____` and no
-//! segmask is written — that happens both for a single failed inference *and*, systematically for
-//! every image, when the model/runtime sidecar files aren't next to the exe. A run of all-`EIX=____`
-//! files means "the classifier never ran", not "every image was unreadable" — check the sidecar
-//! files before suspecting the classifier itself.
+//! segmask is written. Since the model is embedded and `core::preflight` aborts the run if its
+//! session will not build, a systematic run of all-`EIX=____` files no longer means a broken
+//! install — it points at the classifier or the images themselves.
 
 pub mod icc;
 pub mod resize;
