@@ -159,8 +159,8 @@ spec behaviours it owns in its module docstring.
 
 - R1 and R2 are stubs, so a classified image is passed through and only the envelope resizes it.
 - BiRefNet inference is always built in; `core::preflight` aborts at startup, before any file is
-  touched, if the model/runtime sidecar files can't be found — a batch never silently falls back to
-  R3 for every image because of a missing model.
+  touched, if the ONNX session can't be built (e.g. the embedded runtime can't be unpacked to any
+  writable directory) — a batch never silently falls back to R3 for every image.
 
 ---
 
@@ -169,47 +169,58 @@ spec behaviours it owns in its module docstring.
 **CSP ships as one hardened executable with no installation step. This is a hard requirement.**
 
 Hardening is already in place in `Cargo.toml`'s release profile — fat LTO, one codegen unit,
-symbols stripped, no PDB, abort on panic — and is anti-RE as much as size. The *single file* half
-is what is outstanding.
+symbols stripped, no PDB, abort on panic — and is anti-RE as much as size.
 
-**Half met.** The model is in. `shot_classifier::birefnet` embeds `birefnet_lite_512.onnx` with
-`include_bytes!` and loads it through `Session::commit_from_memory`, so the ~179MB of weights are
-part of the binary and a missing model is now a build failure naming the file rather than a runtime
-one. That closes the more important half of the anti-RE case: a loose `.onnx` was the most copyable
-thing CSP owned.
+**Met.** `cargo build --release` produces one `csp.exe` (~195MB) and nothing else. Two things are
+compiled in:
 
-**What is left is `onnxruntime.dll` (~14MB), resolved by `core::sidecar`.** It is the only file CSP
-still looks for beside the exe, apart from the optional `CSP_DEBUG_TAGS` marker.
+- **The model.** `shot_classifier::birefnet` embeds `birefnet_lite_512.onnx` with `include_bytes!`
+  and loads it through `Session::commit_from_memory`.
+- **The ONNX Runtime.** `core::runtime` embeds `onnxruntime.dll` the same way. `ort`'s
+  `load-dynamic` needs a real path to `LoadLibrary`, so at first use the bytes are written once to
+  `<%LOCALAPPDATA%|temp>/csp-ort-<tag>/onnxruntime.dll` and that path is handed to `ort::init_from`.
+  The `<tag>` is the library's size plus a content hash: a rebuilt runtime lands in a fresh
+  directory, repeat runs reuse the file already there, and the write is atomic (temp name then
+  rename) so concurrent CSP processes don't corrupt it.
 
-### Why the runtime is still dynamic
+Both source files are gitignored and expected at the repo root — a missing one is a *build* failure
+naming the file, not a runtime surprise. The only files CSP still touches beside the exe are
+optional markers (`CSP_DEBUG_TAGS`) and the `ORT_DYLIB_PATH` override the `examples/` dev harness
+uses to point at a hand-placed runtime.
 
-Not for want of a static build. pyke publishes a prebuilt *static* ONNX Runtime for
-`x86_64-pc-windows-msvc` (`ortrs_static`, listed in `ort-sys`' `dist.txt`), it links with nothing
-more than swapping `ort`'s `load-dynamic` feature for `download-binaries`, and the resulting exe
-needs no DLL. It was tried. It is **ORT 1.20.0**, and BiRefNet's decoder needs the native
-`DeformConv` op that only arrives in ORT 1.22:
+### Why the runtime is unpacked rather than linked
+
+Static linking was the first choice and it doesn't work here. pyke publishes a prebuilt *static*
+ONNX Runtime for `x86_64-pc-windows-msvc` (`ortrs_static`, listed in `ort-sys`' `dist.txt`), but it
+is **ORT 1.20.0**, and BiRefNet's decoder needs the native `DeformConv` op that only arrives in ORT
+1.22:
 
 ```
 Could not find an implementation for DeformConv(19) node with name 'node_deform_conv2d'
 ```
 
 The session builds and then fails at load, on every image. Newer `ort` does not rescue it: from
-`ort-sys` rc.13 the Windows distribution is Microsoft's own build (`ms@1.28.0`), which is a DLL —
-pyke stopped shipping static Windows libraries. The DLL currently shipped beside the exe is 1.25.
+`ort-sys` rc.13 the Windows distribution is Microsoft's own build (`ms@1.28.0`), a DLL — pyke
+stopped shipping static Windows libraries. Re-exporting the model to avoid `DeformConv` is not the
+way out either: without the native op it decomposes to `GatherND`, which allocates enormous
+intermediates (see the `birefnet` module docs). So the runtime stays a DLL — it is just carried
+*inside* the exe and unpacked on demand rather than shipped next to it.
 
-Re-exporting the model to avoid `DeformConv` is not the way out either: without the native op it
-decomposes to `GatherND`, which allocates enormous intermediates (see the `birefnet` module docs).
+### Linking it in later, if a static ORT >= 1.22 appears
 
-### What closing it takes
-
-Build ONNX Runtime >= 1.22 from source with CMake as a static library, and point `ort-sys` at it
-with `ORT_LIB_LOCATION`, then swap `load-dynamic` for the default linking. `ort` rc.9 requests API
+Build ONNX Runtime >= 1.22 from source with CMake as a static library, point `ort-sys` at it with
+`ORT_LIB_LOCATION`, and swap `load-dynamic` for the default linking. `ort` rc.9 requests API
 version 20 and the ORT C API is forward-compatible, so a 1.22+ library serves it. `birefnet`'s
-`init_runtime` and `core::sidecar` both then delete outright — nothing else in the codebase knows
-the runtime is dynamic.
+`init_runtime` and the whole of `core::runtime` then delete — nothing else in the codebase knows
+the runtime is dynamic. This would drop the runtime unpack (a one-time ~14MB write on first run)
+and shrink the exe slightly, but it is no longer on the critical path for the single-file
+requirement.
 
-Expected result: one `.exe` of roughly 195MB with the fp32 model, or ~110MB if the int8 export is
-adopted.
+### Note: the runtime DLL still needs the VC++ runtime
+
+`onnxruntime.dll` imports `msvcp140.dll` / `vcruntime140*.dll`. Those are present on any
+up-to-date Windows 11 and were already a requirement of the old sidecar layout, so this is not a
+regression — but a truly bare target still needs the Visual C++ Redistributable.
 
 ---
 

@@ -4,6 +4,7 @@ pub mod config;
 pub mod exporter;
 pub mod preprocessor;
 pub mod processor;
+pub mod runtime;
 pub mod shot_classifier;
 
 use shot_classifier::{Mask, ShotClassification};
@@ -68,8 +69,9 @@ fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
     static MODEL: OnceLock<Result<BiRefNetModel, String>> = OnceLock::new();
     MODEL
         .get_or_init(|| {
-            // The weights are embedded; only the runtime still comes from beside the exe.
-            BiRefNetModel::init_runtime(sidecar("ORT_DYLIB_PATH", "onnxruntime.dll"))?;
+            // Weights and runtime are both embedded; the runtime is unpacked to a temp
+            // file first because `ort`'s loader needs a path. See `core::runtime`.
+            BiRefNetModel::init_runtime(runtime::onnxruntime_dylib()?)?;
             BiRefNetModel::load(BiRefNetConfig::default())
         })
         .as_ref()
@@ -88,19 +90,4 @@ fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
 pub fn preflight() -> Result<(), String> {
     model()?;
     Ok(())
-}
-
-/// Resolve a file shipped alongside the executable: `$var` if set, else `<exe dir>/<name>`, else
-/// the bare name relative to the working directory.
-///
-/// One caller left — `onnxruntime.dll`. The model used to come through here too, and no longer
-/// does; this whole function goes when the runtime is linked in.
-fn sidecar(var: &str, name: &str) -> std::path::PathBuf {
-    if let Some(p) = std::env::var_os(var) {
-        return std::path::PathBuf::from(p);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
-        .unwrap_or_else(|| std::path::PathBuf::from(name))
 }

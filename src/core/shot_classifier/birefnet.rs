@@ -71,8 +71,9 @@ impl BiRefNetModel {
     /// trace out of a dylib loader instead of a sentence naming the file.
     ///
     /// This exists only because the runtime cannot yet be linked in — see `Cargo.toml`'s `ort`
-    /// entry. The weights next to it already are ([`MODEL_BYTES`]); when a static ORT >= 1.22 is
-    /// available this function is the whole of what has to go.
+    /// entry. The path handed in is `core::runtime`'s temp copy of the embedded `onnxruntime.dll`,
+    /// not a file beside the exe. When a static ORT >= 1.22 is available, this function and
+    /// `core::runtime` both go.
     pub fn init_runtime(onnxruntime_dylib_path: impl AsRef<std::path::Path>) -> Result<(), String> {
         let dylib = onnxruntime_dylib_path.as_ref();
         if !dylib.is_file() {
