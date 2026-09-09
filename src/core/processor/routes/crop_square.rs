@@ -23,9 +23,11 @@
 //! Stub: returns the image unchanged.
 
 use super::super::super::preprocessor::Prepared;
-use crate::core::shot_classifier::ShotClassification;
+use super::Shot;
 use image::RgbImage;
 
-pub fn apply(prep: &Prepared, _class: Option<&ShotClassification>) -> RgbImage {
+/// `shot.class.touches_edges` picks the behaviour from the table above; `shot.mask` is the subject
+/// itself, which the 4-edge row needs in full rather than as a bounding box.
+pub fn apply(prep: &Prepared, _shot: Shot<'_>) -> RgbImage {
     prep.original.clone()
 }
