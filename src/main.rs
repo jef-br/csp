@@ -1,8 +1,9 @@
 //! Batch product-image repositioner.
 //!
-//! Default (no args): watches the desktop `CSP-INPUT` folder, writes to `CSP-OUTPUT`. With two path
-//! args (`<input_dir> <output_dir>`) it runs a plain batch — used for development and testing on
-//! non-Windows hosts.
+//! Default (no args): watches the desktop `CSP-INPUT` folder, writes to `CSP-OUTPUT` and moves the
+//! originals to `CSP-BACKUP`. With path args (`<input_dir> <output_dir> [backup_dir]`) it runs a
+//! plain batch — used for development and testing on non-Windows hosts. Without a third arg the
+//! backup folder is `CSP-BACKUP` beside the output folder.
 
 mod app;
 
@@ -17,10 +18,17 @@ fn main() {
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() == 2 {
+    if args.len() == 2 || args.len() == 3 {
         let input = PathBuf::from(&args[0]);
         let output = PathBuf::from(&args[1]);
-        let summary = app::batch::run(&input, &output);
+        let backup = match args.get(2) {
+            Some(path) => PathBuf::from(path),
+            None => output
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("CSP-BACKUP"),
+        };
+        let summary = app::batch::run(&input, &output, &backup);
         println!(
             "{} ok, {} failed, {:.2}s",
             summary.ok, summary.failed, summary.seconds

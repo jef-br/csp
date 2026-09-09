@@ -1,7 +1,7 @@
-//! Batch processing: enumerate inputs and process each; core's Exporter deletes the source on
-//! success and leaves failures in place. Recurses one level into subfolders of `input` — each
-//! becomes a same-named subfolder of `output` — matching the folder-bootstrap flow in
-//! `docs/diagrams/JB-A2B.drawio.svg`.
+//! Batch processing: enumerate inputs and process each; core's Exporter moves the source into the
+//! backup folder on success and leaves failures in place. Recurses one level into subfolders of
+//! `input` — each becomes a same-named subfolder of both `output` and `backup` — matching the
+//! folder-bootstrap flow in `docs/diagrams/JB-A2B.drawio.svg`.
 
 use csp::core;
 use rayon::prelude::*;
@@ -18,27 +18,33 @@ pub struct Summary {
 const SUPPORTED: &[&str] = &["jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp"];
 
 /// Process every supported image in `input` into `output`, in parallel across cores. Successfully
-/// processed originals are deleted; failures are left in `input` untouched.
-pub fn run(input: &Path, output: &Path) -> Summary {
+/// processed originals are moved to `backup`; failures are left in `input` untouched.
+pub fn run(input: &Path, output: &Path, backup: &Path) -> Summary {
     let start = Instant::now();
     let _ = std::fs::create_dir_all(output);
+    let _ = std::fs::create_dir_all(backup);
 
     let ok = AtomicUsize::new(0);
     let failed = AtomicUsize::new(0);
-    collect(input, output).par_iter().for_each(|(src, dest)| {
-        if let Some(parent) = dest.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match core::process_file(src, dest) {
-            Ok(()) => {
-                ok.fetch_add(1, Ordering::Relaxed);
+    collect(input, output, backup)
+        .par_iter()
+        .for_each(|(src, dest, backup_dest)| {
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
-            Err(e) => {
-                failed.fetch_add(1, Ordering::Relaxed);
-                eprintln!("failed: {} — {e}", src.display());
+            if let Some(parent) = backup_dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
-        }
-    });
+            match core::process_file(src, dest, backup_dest) {
+                Ok(()) => {
+                    ok.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    eprintln!("failed: {} — {e}", src.display());
+                }
+            }
+        });
 
     Summary {
         ok: ok.load(Ordering::Relaxed),
@@ -47,10 +53,12 @@ pub fn run(input: &Path, output: &Path) -> Summary {
     }
 }
 
-/// Enumerate (source, destination) pairs. Images directly in `input` land directly in `output`;
-/// images in a direct subfolder of `input` land in a same-named subfolder of `output` — one level
-/// of recursion, no deeper. A subfolder that contains no images gets no output counterpart.
-fn collect(input: &Path, output: &Path) -> Vec<(PathBuf, PathBuf)> {
+/// Enumerate (source, destination, backup) triples. Images directly in `input` land directly in
+/// `output` and `backup`; images in a direct subfolder of `input` land in a same-named subfolder of
+/// each — one level of recursion, no deeper. A subfolder that contains no images gets no output or
+/// backup counterpart. The backup keeps the original file name and extension; only the output is
+/// renamed to `.jpg`.
+fn collect(input: &Path, output: &Path, backup: &Path) -> Vec<(PathBuf, PathBuf, PathBuf)> {
     let mut jobs = Vec::new();
     let Ok(entries) = std::fs::read_dir(input) else {
         return jobs;
@@ -62,7 +70,9 @@ fn collect(input: &Path, output: &Path) -> Vec<(PathBuf, PathBuf)> {
         if path.is_dir() {
             subdirs.push(path);
         } else if is_supported(&path) {
-            jobs.push((path.clone(), output.join(dest_name(&path))));
+            let dest = output.join(dest_name(&path));
+            let kept = backup.join(source_name(&path));
+            jobs.push((path, dest, kept));
         }
     }
 
@@ -76,7 +86,8 @@ fn collect(input: &Path, output: &Path) -> Vec<(PathBuf, PathBuf)> {
             let path = entry.path();
             if path.is_file() && is_supported(&path) {
                 let dest = output.join(name).join(dest_name(&path));
-                jobs.push((path, dest));
+                let kept = backup.join(name).join(source_name(&path));
+                jobs.push((path, dest, kept));
             }
         }
     }
@@ -97,4 +108,12 @@ fn is_supported(path: &Path) -> bool {
 fn dest_name(path: &Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
     format!("{stem}.jpg")
+}
+
+/// The original's own file name, kept as-is for the backup copy.
+fn source_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| dest_name(path))
 }

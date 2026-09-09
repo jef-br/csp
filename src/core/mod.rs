@@ -12,7 +12,7 @@ use preprocessor::Prepared;
 use std::path::Path;
 
 /// Full per-file pipeline.
-pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
+pub fn process_file(input: &Path, output: &Path, backup: &Path) -> Result<(), String> {
     let prep = preprocessor::prepare(input)?;
     let classified = classify(&prep);
     let shot = classified
@@ -24,7 +24,7 @@ pub fn process_file(input: &Path, output: &Path) -> Result<(), String> {
         mask,
         class,
     });
-    exporter::export(&img, output, input, shot)
+    exporter::export(&img, output, input, backup, shot)
 }
 
 /// Run the shot classifier over the working-resolution copy.

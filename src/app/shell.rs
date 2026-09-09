@@ -6,6 +6,7 @@ use std::path::Path;
 
 const INPUT_FOLDER: &str = "CSP-INPUT";
 const OUTPUT_FOLDER: &str = "CSP-OUTPUT";
+const BACKUP_FOLDER: &str = "CSP-BACKUP";
 
 pub fn run() {
     console::init();
@@ -13,6 +14,7 @@ pub fn run() {
     let desktop = desktop::desktop_dir();
     let input = desktop.join(INPUT_FOLDER);
     let output = desktop.join(OUTPUT_FOLDER);
+    let backup = desktop.join(BACKUP_FOLDER);
 
     let created = !input.exists();
     if created {
@@ -29,9 +31,13 @@ pub fn run() {
     }
 
     let _ = std::fs::create_dir_all(&output);
+    let _ = std::fs::create_dir_all(&backup);
     println!("\n{}", i18n::processing(lang));
-    let summary = batch::run(&input, &output);
-    println!("\n{}", i18n::finished(lang, summary.seconds, summary.ok, summary.failed));
+    let summary = batch::run(&input, &output, &backup);
+    println!(
+        "\n{}",
+        i18n::finished(lang, summary.seconds, summary.ok, summary.failed)
+    );
     println!("    {}\n", console::folder_link(&output));
     print_close(lang, &input);
     console::pause();
