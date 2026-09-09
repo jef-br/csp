@@ -1,9 +1,10 @@
-//! Exporter: enforce the output size envelope, save to `CSP-OUTPUT`, then remove the original from
-//! `CSP-INPUT`.
+//! Exporter: enforce the output size envelope, save to `CSP-OUTPUT`, then move the original out of
+//! `CSP-INPUT` into `CSP-BACKUP`.
 //!
 //! Every route ends here, so the envelope is applied here — one place, no route can bypass it.
-//! Delete only runs after a successful save, so a write failure leaves the source untouched for a
-//! retry.
+//! The move only runs after a successful save, so a write failure leaves the source untouched for a
+//! retry. Originals are never deleted — they keep their name and extension under `CSP-BACKUP`, in
+//! the same subfolder layout the output uses.
 //!
 //! ## Debug tags (`CSP_DEBUG_TAGS` marker file)
 //!
@@ -42,7 +43,13 @@ pub struct ShotInputs<'a> {
     pub class: &'a ShotClassification,
 }
 
-pub fn export(img: &RgbImage, dest: &Path, source: &Path, shot: Option<ShotInputs<'_>>) -> Result<(), String> {
+pub fn export(
+    img: &RgbImage,
+    dest: &Path,
+    source: &Path,
+    backup: &Path,
+    shot: Option<ShotInputs<'_>>,
+) -> Result<(), String> {
     let sized = resize::to_envelope(img);
 
     if tags_enabled() {
@@ -51,7 +58,21 @@ pub fn export(img: &RgbImage, dest: &Path, source: &Path, shot: Option<ShotInput
         save::save_jpeg_srgb(&sized, dest, config::JPEG_QUALITY)?;
     }
 
-    std::fs::remove_file(source).map_err(|e| format!("delete original: {e}"))
+    move_to_backup(source, backup)
+}
+
+/// Move the original to its `CSP-BACKUP` slot, creating the subfolder if needed. `rename` is the
+/// fast path; when it fails (a different volume, typically) fall back to copy-then-remove so the
+/// original still leaves the input folder.
+fn move_to_backup(source: &Path, backup: &Path) -> Result<(), String> {
+    if let Some(parent) = backup.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("backup folder: {e}"))?;
+    }
+    if std::fs::rename(source, backup).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(source, backup).map_err(|e| format!("back up original: {e}"))?;
+    std::fs::remove_file(source).map_err(|e| format!("remove original after backup: {e}"))
 }
 
 /// A `CSP_DEBUG_TAGS` file next to the running executable turns on filename tagging and the
