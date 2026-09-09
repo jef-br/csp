@@ -15,6 +15,11 @@
 //! Per §5's data note the 3-edge case has never fired on the CiMini set, so it is the one to watch
 //! when the distribution is re-measured.
 //!
+//! **Saliency lives here, not in R1.** Only the 4-edge row needs it: a fully-bled subject reaches
+//! every border, so there is no background left to anchor a square against and the crop has to be
+//! placed from where the salient mass actually sits. Every other row anchors on the edges the
+//! subject touches, and [`super::center_and_stretch`] anchors on the mask's bounding box.
+//!
 //! Stub: returns the image unchanged.
 
 use super::super::super::preprocessor::Prepared;
