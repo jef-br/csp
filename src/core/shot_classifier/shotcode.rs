@@ -16,6 +16,7 @@
 //! `touches_edges`, never this heuristic, so letting it override `eix` would
 //! make the tag lie about what the pipeline did with the image.
 
+use super::super::config::FULL_BLEED_MAX_FG;
 use super::{Edge, Mask, ShotClassification};
 use image::RgbImage;
 use std::collections::HashSet;
@@ -25,13 +26,6 @@ const BGC_PRESENCE: f64 = 0.9;
 
 /// A region smaller than this fraction of the frame is too small to sample a colour from.
 const MIN_REGION_FRAC: f64 = 0.01;
-
-/// If the mask covers less than this fraction of the frame *and* no uniform
-/// background was found, `full_bleed` flags the shot as a probable
-/// full-bleed close-up (the subject likely fills the frame).
-/// Informational only — see the module doc for why it must not touch `eix`.
-/// Interim rule — the texture / BG-type pass might further refine it.
-const FULL_BLEED_MAX_FG: f64 = 0.05;
 
 /// EIX string when the classifier produced no verdict at all. Four
 /// underscores mirror the 4-bit TRBL width of a real verdict.
@@ -74,18 +68,27 @@ impl ShotCode {
 /// Derive the shot code from the working image, its segmentation mask, and the edge verdict.
 pub fn derive(working: &RgbImage, mask: &Mask, class: &ShotClassification) -> ShotCode {
     let ShotColors { bgc, fgc } = shot_colors(working, mask);
-
-    let fg = mask.data.iter().filter(|&&v| v > 0).count();
-    let total = (working.width() as usize * working.height() as usize).max(1);
-    let fg_ratio = fg as f64 / total as f64;
-
-    // Full-bleed close-up: the segmenter found almost no subject and there is
-    // no uniform background -> probably the whole frame is subject. Flagged
-    // for information only; `eix` stays the real verdict (see module doc).
-    let full_bleed = fg_ratio < FULL_BLEED_MAX_FG && bgc.is_none();
     let eix = eix_bits(&class.touches_edges);
 
-    ShotCode { eix, bgc, fgc, full_bleed }
+    // Read off the verdict rather than recomputed here, so the tag and the route can never
+    // disagree about whether this mask was believed.
+    ShotCode { eix, bgc, fgc, full_bleed: class.full_bleed }
+}
+
+/// Is this mask too small to be believed?
+///
+/// True when it covers less than [`FULL_BLEED_MAX_FG`] of the frame *and* no uniform background
+/// was found. Both halves matter. Small on its own is fine — a ring on white paper is a small mask
+/// and a perfectly good subject; the uniform background is what proves the segmenter found the
+/// product rather than a fleck of it. Small *with nowhere to sit* is the close-up case, where the
+/// frame is already all product and the segmenter latched onto the highest-contrast detail in it.
+pub fn is_full_bleed(working: &RgbImage, mask: &Mask) -> bool {
+    let fg = mask.data.iter().filter(|&&v| v > 0).count();
+    let total = (working.width() as usize * working.height() as usize).max(1);
+    if fg as f64 / total as f64 >= FULL_BLEED_MAX_FG {
+        return false;
+    }
+    shot_colors(working, mask).bgc.is_none()
 }
 
 /// 4-bit edge-intersection string in fixed TRBL order.
@@ -274,24 +277,44 @@ mod tests {
     }
 
     #[test]
-    fn full_bleed_is_flagged_but_never_overrides_the_real_eix() {
-        // A noisy image so no single colour dominates the background, and an
-        // almost-empty mask: `full_bleed` fires, but `eix` must still match
-        // the real (empty) verdict — a tag must never claim a route the
-        // pipeline didn't take (Route::select only ever reads
-        // `touches_edges`, never `full_bleed`).
+    fn a_tiny_mask_with_no_background_is_a_full_bleed() {
+        // A noisy image so no single colour dominates the background, and an almost-empty mask.
+        // This is 6 and 30 in miniature: the segmenter marked next to nothing, and there is no
+        // clean backdrop to argue it was a small product photographed well.
         let mut img = RgbImage::new(40, 40);
         for (i, px) in img.pixels_mut().enumerate() {
             let v = (i as u32 * 37 % 256) as u8;
             *px = image::Rgb([v, v.wrapping_add(80), v.wrapping_add(160)]);
         }
         let mask = Mask { width: 40, height: 40, data: vec![0; 40 * 40] };
-        let class = ShotClassification::default();
+        assert!(is_full_bleed(&img, &mask));
+    }
+
+    #[test]
+    fn a_tiny_mask_on_clean_paper_is_not() {
+        // The case the background half of the rule protects: a ring on white paper is a small
+        // mask and a perfectly good subject. Size alone must never condemn it.
+        let img = RgbImage::from_pixel(100, 100, image::Rgb([255, 255, 255]));
+        let mut mask = Mask { width: 100, height: 100, data: vec![0; 100 * 100] };
+        for y in 48..52 {
+            for x in 48..52 {
+                mask.data[y * 100 + x] = 255;
+            }
+        }
+        assert!(!is_full_bleed(&img, &mask), "0.16% of the frame, but the backdrop is clean");
+    }
+
+    #[test]
+    fn the_tag_reports_the_verdict_it_was_given_and_never_touches_eix() {
+        // `full_bleed` comes off the classification, so the tag and the route cannot disagree.
+        // `eix` stays the real verdict regardless (see the module doc).
+        let img = RgbImage::from_pixel(40, 40, image::Rgb([255, 255, 255]));
+        let mask = Mask { width: 40, height: 40, data: vec![0; 40 * 40] };
+        let class = ShotClassification { full_bleed: true, ..Default::default() };
 
         let code = derive(&img, &mask, &class);
         assert!(code.full_bleed);
         assert_eq!(code.eix, "0000");
-        assert!(code.bgc.is_none());
     }
 
     #[test]

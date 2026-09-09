@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | R1 [`Route::CenterAndStretch`] | at least one edge free | square around the subject, blocked edges pinned, background stretched to fill |
 //! | R2 [`Route::CropSquare`] | all four edges bled | no background anywhere to stretch from |
-//! | R3 [`Route::Fallback`] | EIX not set — no verdict at all | fit the whole image into a square canvas |
+//! | R3 [`Route::Fallback`] | no verdict, or a mask not worth believing | fit the whole image into a square canvas |
 //!
 //! **The bleed table lives inside R1.** `docs/csp-spec.md` §5 lists five behaviours for a subject
 //! that reaches an edge — flush to one edge, fill an axis bled at both ends, flush into a shared
@@ -104,6 +104,11 @@ impl Route {
     pub fn select(class: Option<&ShotClassification>) -> Route {
         match class {
             None => Route::Fallback,
+            // A mask that describes nothing is not a subject to frame around. Cropping to it
+            // magnifies whichever speck the segmenter latched onto, which is a worse answer than
+            // R3's — and a louder failure than it looks, because the size envelope then upscales
+            // that speck to fill an 800px square.
+            Some(c) if c.full_bleed => Route::Fallback,
             Some(c) if c.touches_edges.len() < 4 => Route::CenterAndStretch,
             Some(_) => Route::CropSquare,
         }
@@ -128,7 +133,7 @@ mod tests {
     use crate::core::shot_classifier::Edge;
 
     fn verdict(touches: &[Edge]) -> ShotClassification {
-        ShotClassification { touches_edges: touches.to_vec(), refinements: Vec::new() }
+        ShotClassification { touches_edges: touches.to_vec(), full_bleed: false, refinements: Vec::new() }
     }
 
     #[test]
@@ -164,6 +169,16 @@ mod tests {
             Route::CenterAndStretch,
             "three blocked edges still leave one free side to take the slack"
         );
+    }
+
+    #[test]
+    fn a_mask_worth_nothing_falls_back_whatever_its_edges_say() {
+        // The 6/30 case: the edge verdict may be perfectly ordinary, but there is no subject
+        // behind it, so no route that crops to the mask can produce a sane frame.
+        for touches in [vec![], vec![Edge::Top], Edge::ALL.to_vec()] {
+            let class = ShotClassification { full_bleed: true, ..verdict(&touches) };
+            assert_eq!(Route::select(Some(&class)), Route::Fallback, "{touches:?}");
+        }
     }
 
     #[test]
