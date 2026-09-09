@@ -56,3 +56,20 @@ pub const REFINE_CONTEXT_PX: u32 = 30;
 pub const MIN_SIZE: u32 = 800;
 /// Maximum output square side.
 pub const MAX_SIZE: u32 = 2000;
+
+// ---- R1 · Center & Stretch --------------------------------------------------------------------
+
+/// Margin R1 leaves around the subject, as a fraction of the square's side.
+///
+/// The square is `max(bbox_w, bbox_h) * (1 + R1_MARGIN)`, so the margin is shared between the two
+/// sides of the subject's longest axis — roughly 2.1% of the side on each.
+pub const R1_MARGIN: f32 = 0.042;
+
+/// R1 safety inset, part one: how far the *working-resolution* mask boundary can be wrong, in
+/// working pixels. Scaled up to full resolution before use, because that is where the error lands.
+pub const R1_SAFETY_MASK_PX: f32 = 2.0;
+
+/// R1 safety inset, part two: how soft the boundary is in the full-resolution image itself —
+/// antialiasing, JPEG ringing, a hairline of contact shadow. Already in full-resolution pixels, so
+/// it is not scaled.
+pub const R1_SAFETY_EDGE_PX: f32 = 2.0;
