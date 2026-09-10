@@ -4,7 +4,7 @@
 //! [`EdgeView`]'s coordinate transform, so this runs once per edge with
 //! no edge-specific branching here.
 
-use super::geometry::{Edge, EdgeView, Grid};
+use super::geometry::{BoolSummedArea, Edge, EdgeView, Grid};
 use super::segmentation::Mask;
 use image::{Rgb, RgbImage};
 
@@ -59,11 +59,15 @@ pub fn sample_background_color(
     let mask_view = EdgeView::new(mask, edge);
     let strip_h = strip_px.min(img_view.height());
 
+    // The deepest row a query can reach is `strip_h - 1 + safety_px`, so the
+    // table stops there rather than covering the whole mask.
+    let mask_sums = BoolSummedArea::new(&mask_view, strip_h.saturating_add(safety_px));
+
     let mut sum = [0f64; 3];
     let mut count = 0u32;
     for cy in 0..strip_h {
         for cx in 0..img_view.width() {
-            if mask_is_near(&mask_view, cx, cy, safety_px) {
+            if mask_is_near(&mask_sums, cx, cy, safety_px) {
                 continue;
             }
             let Rgb(px) = img_view.get(cx, cy);
@@ -91,14 +95,73 @@ pub fn sample_background_color(
 /// `(cx, cy)`, in the edge-canonical coordinate space. Used to carve the
 /// subject-plus-safety-margin out of the background sampling strip.
 ///
-/// Brute-force over a `margin`-sized window; fine at the scope this
-/// runs at (a `strip_px`-wide band, only for pass-2-flagged instances).
-/// Swap for a distance transform first if this ever shows up in a
-/// profile.
-fn mask_is_near(mask_view: &EdgeView<Mask>, cx: u32, cy: u32, margin: u32) -> bool {
-    let x0 = cx.saturating_sub(margin);
-    let y0 = cy.saturating_sub(margin);
-    let x1 = (cx + margin).min(mask_view.width().saturating_sub(1));
-    let y1 = (cy + margin).min(mask_view.height().saturating_sub(1));
-    (y0..=y1).any(|y| (x0..=x1).any(|x| mask_view.get(x, y)))
+/// `margin` is a full-resolution number — the working-resolution safety
+/// margin times the scale between the two — so on a large original the
+/// window is tens of thousands of pixels wide. Scanning it per strip
+/// pixel was the pipeline's hot spot: a background pixel, the common
+/// case, only reached its answer after reading every cell. The summed-area
+/// table gives the same answer in four lookups.
+fn mask_is_near(mask_sums: &BoolSummedArea, cx: u32, cy: u32, margin: u32) -> bool {
+    mask_sums.any_in(
+        cx.saturating_sub(margin),
+        cy.saturating_sub(margin),
+        cx.saturating_add(margin),
+        cy.saturating_add(margin),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::geometry::Edge;
+
+    fn noisy_mask(w: u32, h: u32, seed: u64, density: u64) -> Mask {
+        let mut state = seed | 1;
+        let mut data = Vec::with_capacity((w * h) as usize);
+        for _ in 0..w * h {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            data.push(if (state >> 33) % 100 < density { 255 } else { 0 });
+        }
+        Mask { width: w, height: h, data }
+    }
+
+    /// The window scan `mask_is_near` replaced, kept as the reference.
+    fn brute_force(mask_view: &EdgeView<Mask>, cx: u32, cy: u32, margin: u32) -> bool {
+        let x0 = cx.saturating_sub(margin);
+        let y0 = cy.saturating_sub(margin);
+        let x1 = (cx + margin).min(mask_view.width().saturating_sub(1));
+        let y1 = (cy + margin).min(mask_view.height().saturating_sub(1));
+        (y0..=y1).any(|y| (x0..=x1).any(|x| mask_view.get(x, y)))
+    }
+
+    #[test]
+    fn summed_area_matches_the_window_scan() {
+        for (w, h) in [(1u32, 1u32), (7, 3), (3, 7), (21, 17)] {
+            for density in [0, 5, 50, 100] {
+                let mask = noisy_mask(w, h, (w * 7 + h) as u64 + density, density as u64);
+                for edge in Edge::ALL {
+                    let view = EdgeView::new(&mask, edge);
+                    for strip_h in [1u32, 3, view.height()] {
+                        let strip_h = strip_h.min(view.height());
+                        for margin in [0u32, 1, 4, 30] {
+                            let sums = BoolSummedArea::new(
+                                &view,
+                                strip_h.saturating_add(margin),
+                            );
+                            for cy in 0..strip_h {
+                                for cx in 0..view.width() {
+                                    assert_eq!(
+                                        mask_is_near(&sums, cx, cy, margin),
+                                        brute_force(&view, cx, cy, margin),
+                                        "{w}x{h} {edge:?} density {density} \
+                                         strip {strip_h} margin {margin} at ({cx},{cy})"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
