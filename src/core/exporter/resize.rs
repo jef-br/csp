@@ -4,8 +4,8 @@
 //! envelope is enforced, and no route can bypass it.
 //!
 //! The scale is always uniform: aspect ratio is preserved, so a route that hands over a square gets
-//! a square back. Today R1 and R2 are stubs and pass the original through un-squared, which is why
-//! this works on the longest side rather than assuming a square input.
+//! a square back. It works on the longest side rather than assuming a square input, so a route that
+//! ever hands over a non-square image still lands inside the envelope.
 
 use super::super::config::{MAX_SIZE, MIN_SIZE};
 use image::{imageops, RgbImage};

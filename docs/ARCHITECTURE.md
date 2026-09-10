@@ -8,9 +8,9 @@ diagram drifted.
 
 > **Diagram status.** The four diagrams this document used to embed (`class-map`, `pipeline-flow`,
 > `detection-internals`, `geometry-routing`) were deleted when the classical detector was retired.
-> `JBA2B.drawio.svg` survives but has drifted — see [Diagram drift](#diagram-drift) for the
-> node-level list of what it still needs. Until that is done the maintenance rule above cannot be
-> followed, because there is no node to patch.
+> `JBA2B.drawio.svg` survives and was rebuilt against the current code — see
+> [The diagram](#the-diagram). The maintenance rule above applies again: every stage has a node to
+> patch.
 
 ---
 
@@ -62,13 +62,15 @@ silently processed as a clean free-standing shot.
 
 | Module | Surface | Notes |
 |---|---|---|
-| `app::batch` | `run(input, output, backup) -> Summary`, `Summary` | rayon fan-out, one level of subfolder recursion |
+| `app::batch` | `run(input, output, backup) -> Summary`, `Summary` | rayon fan-out, one level of subfolder recursion; drives `progress` |
+| `app::progress` | `Progress`, `new`, `tick`, `note_failure` | in-place unicode bar, throttled ~15 Hz via non-blocking `try_lock`; self-disables when stdout is not a TTY |
 | `app::shell` | `run()` | Windows double-click flow: desktop `CSP-INPUT` → `CSP-OUTPUT`, originals → `CSP-BACKUP` |
+| `app::header` | `print()` | Windows-only; hand-tuned startup banner (logo + name + summary) |
 | `app::console` | `init`, `ui_language`, `folder_link`, `pause` | Windows-only; ANSI, OSC-8 links, UI language |
 | `app::desktop` | `desktop_dir()` | Windows-only |
 | `app::i18n` | `Lang`, `drop_prompt`, `processing`, `finished`, `close_line` | EN/ES/FR/NL/IT/DE |
 
-`console`, `desktop` and `shell` are `#[cfg(windows)]`. On other hosts only the two-argument CLI form
+`console`, `desktop`, `header` and `shell` are `#[cfg(windows)]`; `progress` is cross-platform. On other hosts only the two-argument CLI form
 (`csp <input_dir> <output_dir>`) is available, and `i18n` reads as dead code because nothing calls
 it — that is expected, not drift.
 
@@ -135,30 +137,31 @@ coordinate transform. Nothing edge-specific lives outside `geometry`.
 
 ## 3. Routing
 
-Three routes, keyed on the edge-intersection (EIX) verdict:
+Three routes, keyed on the shot classifier's verdict:
 
 | Route | Verdict | Strategy |
 |---|---|---|
-| **R1** `CenterAndStretch` | EIX `0000` | crop a square around the subject; background fills the rest |
-| **R2** `CropSquare` | EIX set, non-zero | crop into real pixels, anchored on the edges touched |
-| **R3** `Fallback` | EIX not set | fit the whole image into a square canvas, centred, white fill |
+| **R1** `CenterAndStretch` | a mask that describes a subject, with room to grow | square around the subject; bled edges pinned, background stretched to fill |
+| **R2** `CropSquare` | `mask_too_small`, or left+right bled and nothing else, or all four bled | the largest square already in the frame, centred on the frame |
+| **R3** `Fallback` | no verdict at all | fit the whole image into a square canvas, centred, white fill |
 
 **Three routes, six behaviours.** `docs/csp-spec.md` §5's table is not a competing route list — it is
-the *inside* of these routes. Its `0 edges` row is R1's strategy; its `1`, `2 opposite`,
-`2 adjacent`, `3` and `4` rows are cases `crop_square` matches on internally as R2 grows. Choosing
-among them is a behaviour, not a routing decision, so it never reaches `Route::select`.
+the *inside* of these routes. Four of its bleed rows are one rule seen from four angles, and
+`center_and_stretch` applies that rule: a bled edge is pinned, an axis with a free side takes the
+margin, and the slack goes to the free sides. Choosing among them is a behaviour, not a routing
+decision, so it never reaches `Route::select`. Only the full bleed leaves R1, because with all four
+edges blocked there is no background anywhere to stretch from.
 
 R3 has no spec row. It is the answer to "we don't know": nothing cropped, nothing scaled, so a wrong
 guess costs framing rather than pixels.
 
-**Status:** R3 is implemented. R1 and R2 are stubs returning the image unchanged; each carries the
-spec behaviours it owns in its module docstring.
+**Status:** all three routes are implemented. Each carries the spec behaviours it owns in its
+module docstring.
 
 ---
 
 ## 4. Known gaps
 
-- R1 and R2 are stubs, so a classified image is passed through and only the envelope resizes it.
 - BiRefNet inference is always built in; `core::preflight` aborts at startup, before any file is
   touched, if the ONNX session can't be built (e.g. the embedded runtime can't be unpacked to any
   writable directory) — a batch never silently falls back to R3 for every image.
@@ -225,44 +228,34 @@ regression — but a truly bare target still needs the Visual C++ Redistributabl
 
 ---
 
-## 6. Diagram drift
+## 6. The diagram
 
-`docs/diagrams/JBA2B.drawio.svg` is an end-to-end flowchart across four containers: **App**,
-**Core** (Preprocessor → Shot Classifier → Processor → Exporter), and a proposed **CSP-Analyzer**.
-Its App container still matches the code. The rest has drifted:
+`docs/diagrams/JBA2B.drawio.svg` is an end-to-end flowchart across six containers: **App**, **Core**
+(Preprocessor → Shot Classifier → Processor → Exporter) and a dev-harness lane. It was rebuilt
+against the current code, so the maintenance rule at the top of this document applies again — add a
+module or a public function, patch its node in the same commit.
 
-**Preprocessor container**
-- `Alpha channel present?` / `Use decoded RGB as-is (no alpha)` — alpha is now always flattened onto
-  white and the channel is never carried forward. The branch is gone.
-- Missing a node for the working-resolution downscale to `WORKING_SIZE`.
+What each container now says:
 
-**Shot Classifier container** — every node is obsolete. It describes the classical detector:
-`Alpha mask available?`, `Box = bounding extent of alpha > 8`, the low-contrast zone-stretch retry,
-`Foreground fraction tiny AND border-ring texture high?`, `→ SalientSquare`,
-`Box covers ≥ 98.5% of the frame?`, `Box touches ≥ 2 frame edges? (BLEED_EDGES)`, `→ WholeFrame`.
-Replace with: segment the working copy → pass 1 gate per edge → pass 2 refine for gated edges →
-`touches_edges`, or no verdict.
+- **App** — launch, `core::preflight` (unpack the embedded runtime, build the session, abort on
+  failure), the desktop folder bootstrap, and `batch::run`'s rayon fan-out with its one level of
+  subfolder recursion mirrored into `CSP-OUTPUT` and `CSP-BACKUP`.
+- **Preprocessor** — decode + EXIF, the unconditional alpha flatten onto white, the sRGB branch,
+  and `Prepared { original, working }`.
+- **Shot Classifier** — segmentation, pass-1 `gate`, pass-2 `refine_edge`, the graze test, and the
+  `ShotClassification` + `Mask` that leaves for the Processor. The no-verdict `None` is a node of
+  its own, because it is not the same thing as an empty edge list.
+- **Processor** — `Route::select`'s two questions and the three routes behind them.
+- **Exporter** — `resize::to_envelope`, the `CSP_DEBUG_TAGS` branch, the JPEG save, and the move of
+  the original into `CSP-BACKUP` on success.
+- **Dev harness** — `examples/run_dir.rs`, replacing the proposed `CSP-Analyzer` container whose
+  target (`src/bin/csp_analyzer.rs`) was deleted with the classical detector.
 
-**Processor container** — obsolete. `Detection kind = SalientSquare?` and `Edge-intersect count = 0?`
-become the three-way `Route::select`. The `MIN_SIZE / MAX_UPSCALE` growth node should be deleted
-outright: `MAX_UPSCALE` was a whole-image upscale cap that no longer exists anywhere in the code and
-is not coming back. The `[800, 2000]` resize node stays, but moves to the Exporter container — that
-is where `resize::to_envelope` now runs.
+Two green bold tags survive from the debug-image protocol, `SEGMASK` and `REFINE`, and they name
+files `run_dir` actually writes (`<stem>_1_segmask.png`, `<stem>_2_refine.png`). The older invented
+tags went with the detector.
 
-Not to be confused with the spec's 42% background-stretch limit (`docs/csp-spec.md` §6), which is a
-different rule that happens to share the number 1.42: it caps how far a background *band* may be
-stretched during fill, and is live design for R1.
-
-**Exporter container** — needs the `[800, 2000]` resize node moved in from the Processor container
-(above), plus a node for the optional `CSP_DEBUG_TAGS` branch: rename the output to
-`<stem>--EIX=…[--BGC=…][--FGC=…]` and write `<stem>_segmask.png` beside it, from
-`shot_classifier::shotcode`. The classify step's output also changes from `Option<ShotClassification>`
-to `Option<(ShotClassification, Mask)>` — the mask is threaded to the Exporter for that branch.
-
-**CSP-Analyzer container** — its target, `src/bin/csp_analyzer.rs`, was deleted. Either drop the
-container or re-point it at `examples/run_dir.rs`, which now fills that role.
-
-These edits must be made through the draw.io editor (the VS Code **Draw.io Integration** extension),
-not by hand-editing the embedded XML — the `content` attribute and the rendered SVG have to be
-regenerated together or the picture and its source silently disagree. See
+Edits must be made through the draw.io editor (the VS Code **Draw.io Integration** extension), or
+through an equivalent render that regenerates both layers — the `content` attribute and the visible
+SVG have to be rewritten together, or the picture and its source silently disagree. See
 `.claude/skills/diagram-sync/SKILL.md`.

@@ -31,9 +31,11 @@ detector they documented. Do not look for them, and do not treat their absence a
 something to repair by recreating them under the old names; the pipeline they described
 no longer exists.
 
-`JBA2B.drawio.svg` itself has known drift — its Shot Classifier and Processor containers
-still describe the retired detector. `docs/ARCHITECTURE.md` §6 lists the outstanding
-edits node by node. Reconcile against that list rather than re-deriving it.
+`JBA2B.drawio.svg` was rebuilt against the current code on 2026-09-09 and is in sync;
+the drift that used to be listed here — a Shot Classifier and Processor still describing
+the retired detector — is gone. `docs/ARCHITECTURE.md` §6 says what each container
+covers. It now has six containers, not four: the proposed CSP-Analyzer lane was replaced
+by a dev-harness lane for `examples/run_dir.rs`.
 
 Two situations bring you here: **code changed** (does a diagram need a matching edit?)
 and **a diagram itself needs reading or editing** (are you touching the right layer?).
@@ -114,9 +116,32 @@ the XML and the rendered SVG together on save. Use containers (a real container 
 not just placing boxes near each other) when adding something that conceptually belongs
 inside an existing group — that's what makes the `parent=` relationship in the XML.
 
-If no editor is available in the current environment, it's fine to *read* via the
-script and describe what needs to change, and leave the actual edit for a session or
-person that has the editor.
+If no interactive editor is available, don't stop at describing the change — use the
+headless renderer in §2.3, which rewrites both layers together the same way.
+
+### 2.3 Editing without the editor: render both layers headlessly
+
+The extension bundles the whole drawio webapp, and headless Chrome can drive it, so a
+session with no GUI can still produce a real drawio export rather than a hand-patched
+blob. `scripts/render_drawio.py` does exactly that: it loads drawio's own `Graph`,
+decodes the model into it, calls `graph.getSvg()`, and writes the `content=` attribute
+from the same model. Both layers come out of one source, which is the whole point.
+
+```bash
+python3 .claude/skills/diagram-sync/scripts/decode_drawio.py docs/diagrams/JBA2B.drawio.svg > model.xml
+# edit model.xml — plain <mxGraphModel> XML, the same thing decode prints
+python3 .claude/skills/diagram-sync/scripts/render_drawio.py model.xml docs/diagrams/JBA2B.drawio.svg
+```
+
+Decode → render with no edit in between reproduces the same model and the same drawing,
+so the round-trip is safe to lean on. Two things it does not do for you: it can't tell
+you a box is too small for its text, and it can't tell you an edge label landed on top
+of a shape. Screenshot the result (Chrome `--screenshot` on the SVG) and look at it
+before committing — labels colliding with box text is the usual failure.
+
+A caution when writing labels: drawio renders them as HTML, so text containing `<stem>`
+or `<input>` is parsed as a tag and disappears. Escape it for HTML *and* for the XML
+attribute it lives in — two rounds, not one.
 
 ## 3. On explicit request: check sync
 

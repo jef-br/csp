@@ -23,14 +23,15 @@ needs). `docs/ARCHITECTURE.md` §5 has the detail and the clean finish.
 ## Diagrams
 `docs/diagrams/JBA2B.drawio.svg` is the one remaining diagram — an end-to-end App/Core flowchart.
 Reach it through the diagram-sync skill: you read the embedded mxGraph XML, not the picture.
-Editing needs the VS Code **Draw.io Integration** extension; hand-editing the compressed blob
-desyncs source from image. Without the editor, write down what needs to change instead.
+Editing needs something that rewrites both layers together — the VS Code **Draw.io Integration**
+extension, or a headless render through the drawio webapp that extension bundles. Hand-editing the
+compressed blob desyncs source from image.
 
-## Maintenance rule — currently suspended
+## Maintenance rule — live again
 One node per module, one per `struct`/`enum`; add a module or public function → patch the node in
-the same commit. Suspended because the four diagrams it was written for went out with the classical
-detector, and `JBA2B.drawio.svg` has drift of its own — the classifier-rebuild modules have no node
-to patch. `docs/ARCHITECTURE.md` §6 lists the outstanding edits. Un-suspend once those land.
+the same commit. It was suspended while `JBA2B.drawio.svg` still described the retired classical
+detector; the diagram was rebuilt against the current code on 2026-09-09, so every stage has a node
+to patch again. `docs/ARCHITECTURE.md` §6 says what each container covers.
 
 ## Docs
 * `docs/ARCHITECTURE.md` — module map, pipeline stages, routing, known gaps.

@@ -3,6 +3,7 @@
 //! `input` — each becomes a same-named subfolder of both `output` and `backup` — matching the
 //! folder-bootstrap flow in `docs/diagrams/JB-A2B.drawio.svg`.
 
+use super::progress::Progress;
 use csp::core;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -26,8 +27,9 @@ pub fn run(input: &Path, output: &Path, backup: &Path) -> Summary {
 
     let ok = AtomicUsize::new(0);
     let failed = AtomicUsize::new(0);
-    collect(input, output, backup)
-        .par_iter()
+    let jobs = collect(input, output, backup);
+    let progress = Progress::new(jobs.len());
+    jobs.par_iter()
         .for_each(|(src, dest, backup_dest)| {
             if let Some(parent) = dest.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -41,9 +43,10 @@ pub fn run(input: &Path, output: &Path, backup: &Path) -> Summary {
                 }
                 Err(e) => {
                     failed.fetch_add(1, Ordering::Relaxed);
-                    eprintln!("failed: {} — {e}", src.display());
+                    progress.note_failure(&format!("failed: {} — {e}", src.display()));
                 }
             }
+            progress.tick();
         });
 
     Summary {

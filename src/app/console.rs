@@ -9,7 +9,7 @@ use windows_sys::Win32::System::Console::{
     STD_OUTPUT_HANDLE,
 };
 
-const CYAN: &str = "\x1b[96m";
+const CYAN: &str = "\x1b[95m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
 
