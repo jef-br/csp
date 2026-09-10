@@ -126,3 +126,64 @@ impl Rect {
         }
     }
 }
+
+/// Prefix sums over a boolean grid, so "is any cell set inside this
+/// rectangle?" costs four lookups instead of scanning the rectangle.
+///
+/// Exists for [`super::sampling`], which asks that question once per
+/// pixel of a sampling strip with a window whose radius scales with the
+/// image — at full resolution that window is thousands of pixels, and
+/// the answer for a background pixel is only reached after scanning all
+/// of them. Building the table is one pass over the rows the strip can
+/// actually reach; every query after it is O(1).
+pub(crate) struct BoolSummedArea {
+    width: u32,
+    height: u32,
+    /// `(width + 1) * (height + 1)`, row-major. `sums[(y+1)*stride + x+1]`
+    /// counts the set cells in `[0, x] x [0, y]`; the zero row and column
+    /// are the usual padding that makes the four-corner query branchless.
+    sums: Vec<u32>,
+}
+
+impl BoolSummedArea {
+    /// Builds the table over the top `rows` rows of `grid` — the caller
+    /// knows how deep its queries can reach, and rows below that are
+    /// never read.
+    pub(crate) fn new<G: Grid<Item = bool>>(grid: &G, rows: u32) -> Self {
+        let width = grid.width();
+        let height = rows.min(grid.height());
+        let stride = width as usize + 1;
+        let mut sums = vec![0u32; stride * (height as usize + 1)];
+        for y in 0..height as usize {
+            let mut run = 0u32;
+            for x in 0..width as usize {
+                run += u32::from(grid.get(x as u32, y as u32));
+                sums[(y + 1) * stride + x + 1] = sums[y * stride + x + 1] + run;
+            }
+        }
+        BoolSummedArea { width, height, sums }
+    }
+
+    /// Is any cell set inside the inclusive rectangle `[x0, x1] x [y0, y1]`?
+    ///
+    /// The rectangle is clamped to the table, and one that falls entirely
+    /// outside it reads as empty — same answer the scan it replaces gave
+    /// for an empty coordinate range.
+    pub(crate) fn any_in(&self, x0: u32, y0: u32, x1: u32, y1: u32) -> bool {
+        if self.width == 0 || self.height == 0 {
+            return false;
+        }
+        let x1 = x1.min(self.width - 1);
+        let y1 = y1.min(self.height - 1);
+        if x0 > x1 || y0 > y1 {
+            return false;
+        }
+        let stride = self.width as usize + 1;
+        let (x0, y0) = (x0 as usize, y0 as usize);
+        let (x1, y1) = (x1 as usize + 1, y1 as usize + 1);
+        let count = self.sums[y1 * stride + x1] + self.sums[y0 * stride + x0]
+            - self.sums[y0 * stride + x1]
+            - self.sums[y1 * stride + x0];
+        count > 0
+    }
+}
