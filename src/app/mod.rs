@@ -2,9 +2,12 @@
 
 pub mod batch;
 pub mod i18n;
+pub mod progress;
 
 #[cfg(windows)]
 mod console;
+#[cfg(windows)]
+mod header;
 #[cfg(windows)]
 mod desktop;
 #[cfg(windows)]

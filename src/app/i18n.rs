@@ -24,6 +24,10 @@ impl Lang {
     }
 }
 
+pub fn header() -> &'static str {
+    "csp - Command-line Sprite Packer"
+}
+
 /// Shown when the input folder was just created or is empty. The folder path is printed separately.
 pub fn drop_prompt(lang: Lang) -> &'static str {
     match lang {
