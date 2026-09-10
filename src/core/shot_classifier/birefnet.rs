@@ -149,8 +149,19 @@ impl BiRefNetModel {
     }
 }
 
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
+/// The logit a probability corresponds to — the inverse of a sigmoid.
+///
+/// A sigmoid is monotonic, so asking whether it clears a threshold is the
+/// same question as asking whether the raw logit clears this. Converting
+/// the threshold costs one `ln` per image; converting every pixel cost an
+/// `exp` per *output* pixel, near a million of them at working resolution.
+///
+/// A threshold outside `(0, 1)` maps to an infinity and keeps the answer
+/// the sigmoid form gave: at `>= 1` nothing passes, at `<= 0` everything
+/// does. At the default 0.5 the two forms agree exactly — `sigmoid(0)` is
+/// 0.5 with no rounding — so the shipped mask is unchanged pixel for pixel.
+fn logit(p: f32) -> f32 {
+    (p / (1.0 - p)).ln()
 }
 
 impl SegmentationModel for BiRefNetModel {
@@ -177,26 +188,49 @@ impl SegmentationModel for BiRefNetModel {
             .run(input_values)
             .map_err(|e| format!("BiRefNet inference: {e}"))?;
 
-        let logits = outputs["output_image"]
-            .try_extract_tensor::<f32>()
+        // Borrow the runtime's own buffer rather than collecting it into a
+        // fresh Vec — the output plane is a megabyte of f32 per image, and
+        // nothing here needs to own or outlive it.
+        let (shape, logit_data) = outputs["output_image"]
+            .try_extract_raw_tensor::<f32>()
             .map_err(|e| format!("output_image was not an f32 tensor: {e}"))?;
-        let logit_data: Vec<f32> = logits.iter().copied().collect();
+
+        // The upsample below slices this a row at a time, so the buffer has
+        // to be exactly the plane the model's own metadata declared.
+        let plane = (in_w as usize) * (in_h as usize);
+        if logit_data.len() != plane {
+            return Err(format!(
+                "output_image holds {} values, expected {plane} for a {in_w}x{in_h} mask (shape {shape:?})",
+                logit_data.len()
+            ));
+        }
 
         // Resize the model-resolution mask back to the working image's
-        // own dimensions with nearest-neighbor sampling on the sigmoid +
-        // threshold result (matches how the mask will be consumed
-        // downstream — a binary mask, not a soft alpha).
+        // own dimensions with nearest-neighbor sampling on the threshold
+        // result (matches how the mask will be consumed downstream — a
+        // binary mask, not a soft alpha).
+        //
+        // The threshold moves into logit space once, and the column map is
+        // shared by every row: both were per-pixel work whose answer never
+        // varied per pixel.
         let (out_w, out_h) = (image.width(), image.height());
+        let threshold = logit(self.config.mask_threshold);
+        let x_map: Vec<usize> = (0..out_w)
+            .map(|ox| {
+                (((ox as f32 + 0.5) / out_w as f32 * in_w as f32) as usize)
+                    .min(in_w as usize - 1)
+            })
+            .collect();
+
         let mut data = vec![0u8; (out_w * out_h) as usize];
         for oy in 0..out_h {
-            for ox in 0..out_w {
-                let mx = ((ox as f32 + 0.5) / out_w as f32 * in_w as f32) as usize;
-                let my = ((oy as f32 + 0.5) / out_h as f32 * in_h as f32) as usize;
-                let mx = mx.min(in_w as usize - 1);
-                let my = my.min(in_h as usize - 1);
-                let logit = logit_data[my * in_w as usize + mx];
-                if sigmoid(logit) > self.config.mask_threshold {
-                    data[(oy * out_w + ox) as usize] = 255;
+            let my = (((oy as f32 + 0.5) / out_h as f32 * in_h as f32) as usize)
+                .min(in_h as usize - 1);
+            let src = &logit_data[my * in_w as usize..][..in_w as usize];
+            let dst = &mut data[(oy * out_w) as usize..][..out_w as usize];
+            for (out, &mx) in dst.iter_mut().zip(&x_map) {
+                if src[mx] > threshold {
+                    *out = 255;
                 }
             }
         }
