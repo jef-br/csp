@@ -28,7 +28,7 @@ fn main() {
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .join("CSP-BACKUP"),
         };
-        let summary = app::batch::run(&input, &output, &backup);
+        let summary = app::batch::run(&input, &output, &backup, &[]);
         println!(
             "{} ok, {} failed, {:.2}s",
             summary.ok, summary.failed, summary.seconds
