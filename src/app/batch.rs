@@ -8,51 +8,58 @@ use csp::core;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 pub struct Summary {
     pub ok: usize,
     pub failed: usize,
     pub seconds: f64,
+    /// One line per failed file, collected rather than printed: the progress bar owns the screen
+    /// while the batch runs, so the shell reports these once it is done.
+    pub failures: Vec<String>,
 }
 
 const SUPPORTED: &[&str] = &["jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp"];
 
 /// Process every supported image in `input` into `output`, in parallel across cores. Successfully
-/// processed originals are moved to `backup`; failures are left in `input` untouched.
-pub fn run(input: &Path, output: &Path, backup: &Path) -> Summary {
+/// processed originals are moved to `backup`; failures are left in `input` untouched. `footer` is
+/// the block of lines drawn under the progress bar and held in place for the whole run.
+pub fn run(input: &Path, output: &Path, backup: &Path, footer: &[String]) -> Summary {
     let start = Instant::now();
     let _ = std::fs::create_dir_all(output);
     let _ = std::fs::create_dir_all(backup);
 
     let ok = AtomicUsize::new(0);
-    let failed = AtomicUsize::new(0);
+    let failures = Mutex::new(Vec::new());
     let jobs = collect(input, output, backup);
-    let progress = Progress::new(jobs.len());
-    jobs.par_iter()
-        .for_each(|(src, dest, backup_dest)| {
-            if let Some(parent) = dest.parent() {
-                let _ = std::fs::create_dir_all(parent);
+    let progress = Progress::new(jobs.len(), footer);
+    jobs.par_iter().for_each(|(src, dest, backup_dest)| {
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Some(parent) = backup_dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match core::process_file(src, dest, backup_dest) {
+            Ok(()) => {
+                ok.fetch_add(1, Ordering::Relaxed);
             }
-            if let Some(parent) = backup_dest.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            match core::process_file(src, dest, backup_dest) {
-                Ok(()) => {
-                    ok.fetch_add(1, Ordering::Relaxed);
+            Err(e) => {
+                if let Ok(mut list) = failures.lock() {
+                    list.push(format!("failed: {} — {e}", src.display()));
                 }
-                Err(e) => {
-                    failed.fetch_add(1, Ordering::Relaxed);
-                    progress.note_failure(&format!("failed: {} — {e}", src.display()));
-                }
             }
-            progress.tick();
-        });
+        }
+        progress.tick();
+    });
 
+    let failures = failures.into_inner().unwrap_or_default();
     Summary {
         ok: ok.load(Ordering::Relaxed),
-        failed: failed.load(Ordering::Relaxed),
+        failed: failures.len(),
         seconds: (start.elapsed().as_secs_f64() * 100.0).round() / 100.0,
+        failures,
     }
 }
 
