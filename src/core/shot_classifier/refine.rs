@@ -234,32 +234,84 @@ impl Trimap {
     /// `ring_px` is the width of the "unknown" ring straddling the mask
     /// boundary, in crop-resolution pixels — this ring is exactly where
     /// the working-resolution mask's upsampling made it inaccurate.
+    ///
+    /// A pixel is in the ring when some pixel within `ring_px` of it,
+    /// along a row or a column, holds the opposite value. Asking that
+    /// pixel by pixel meant walking `ring_px` steps in four directions
+    /// each time, and `ring_px` scales with the original — tens of steps
+    /// on a large photo, never short-circuited for the uniform
+    /// background that dominates the crop.
+    ///
+    /// Walking runs instead answers it in one pass per axis. Within a run
+    /// of equal values the nearest opposite pixel is whatever sits just
+    /// past the run's end, so the ring is the first and last `ring_px`
+    /// pixels of every run that actually has a neighbouring run — no
+    /// per-pixel search at all.
     fn from_mask(mask: &Mask, ring_px: u32) -> Trimap {
         let (w, h) = (mask.width, mask.height);
-        let mut labels = vec![TrimapLabel::Background; (w * h) as usize];
+        let at = |x: u32, y: u32| mask.data[(y * w + x) as usize] != 0;
+
+        let mut labels = Vec::with_capacity((w * h) as usize);
         for y in 0..h {
             for x in 0..w {
-                let inside = mask.get(x, y);
-                let near_boundary = (0..=ring_px).any(|d| {
-                    [
-                        x.checked_sub(d).map(|nx| mask.get(nx, y)),
-                        Some(mask.get((x + d).min(w - 1), y)),
-                        y.checked_sub(d).map(|ny| mask.get(x, ny)),
-                        Some(mask.get(x, (y + d).min(h - 1))),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|v| v != inside)
-                });
-                labels[(y * w + x) as usize] = if near_boundary {
-                    TrimapLabel::Unknown
-                } else if inside {
+                labels.push(if at(x, y) {
                     TrimapLabel::Foreground
                 } else {
                     TrimapLabel::Background
-                };
+                });
             }
         }
+
+        // `ring_px == 0` leaves the two-label mask as it stands: with no
+        // ring there is nothing for the matting step to re-decide.
+        if ring_px > 0 && w > 0 && h > 0 {
+            let mut mark = |x: u32, y: u32| labels[(y * w + x) as usize] = TrimapLabel::Unknown;
+
+            for y in 0..h {
+                let mut start = 0;
+                while start < w {
+                    let value = at(start, y);
+                    let mut end = start;
+                    while end + 1 < w && at(end + 1, y) == value {
+                        end += 1;
+                    }
+                    if start > 0 {
+                        for x in start..=(start + ring_px - 1).min(end) {
+                            mark(x, y);
+                        }
+                    }
+                    if end + 1 < w {
+                        for x in (end + 1).saturating_sub(ring_px).max(start)..=end {
+                            mark(x, y);
+                        }
+                    }
+                    start = end + 1;
+                }
+            }
+
+            for x in 0..w {
+                let mut start = 0;
+                while start < h {
+                    let value = at(x, start);
+                    let mut end = start;
+                    while end + 1 < h && at(x, end + 1) == value {
+                        end += 1;
+                    }
+                    if start > 0 {
+                        for y in start..=(start + ring_px - 1).min(end) {
+                            mark(x, y);
+                        }
+                    }
+                    if end + 1 < h {
+                        for y in (end + 1).saturating_sub(ring_px).max(start)..=end {
+                            mark(x, y);
+                        }
+                    }
+                    start = end + 1;
+                }
+            }
+        }
+
         Trimap { width: w, height: h, labels }
     }
 
@@ -319,4 +371,79 @@ fn sample_foreground_color(image: &RgbImage, trimap: &Trimap) -> Option<ColorSta
         ],
         sample_count: count,
     })
+}
+
+#[cfg(test)]
+mod trimap_tests {
+    use super::*;
+
+    /// The definition `from_mask` used to compute directly: within
+    /// `ring_px` along a row or column, does any pixel hold the opposite
+    /// value? Kept as the reference the fast version is checked against.
+    fn brute_force(mask: &Mask, ring_px: u32) -> Vec<TrimapLabel> {
+        let (w, h) = (mask.width, mask.height);
+        let mut labels = vec![TrimapLabel::Background; (w * h) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let inside = mask.get(x, y);
+                let near_boundary = (0..=ring_px).any(|d| {
+                    [
+                        x.checked_sub(d).map(|nx| mask.get(nx, y)),
+                        Some(mask.get((x + d).min(w - 1), y)),
+                        y.checked_sub(d).map(|ny| mask.get(x, ny)),
+                        Some(mask.get(x, (y + d).min(h - 1))),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|v| v != inside)
+                });
+                labels[(y * w + x) as usize] = if near_boundary {
+                    TrimapLabel::Unknown
+                } else if inside {
+                    TrimapLabel::Foreground
+                } else {
+                    TrimapLabel::Background
+                };
+            }
+        }
+        labels
+    }
+
+    /// A cheap deterministic bit source — enough to shake out run
+    /// boundaries at every offset without pulling in a rng dependency.
+    fn noisy_mask(w: u32, h: u32, seed: u64, density: u64) -> Mask {
+        let mut state = seed | 1;
+        let mut data = Vec::with_capacity((w * h) as usize);
+        for _ in 0..w * h {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            data.push(if (state >> 33) % 100 < density { 255 } else { 0 });
+        }
+        Mask { width: w, height: h, data }
+    }
+
+    #[test]
+    fn matches_the_brute_force_definition() {
+        for (w, h) in [(1u32, 1u32), (1, 9), (9, 1), (13, 11), (32, 24)] {
+            for density in [0, 3, 50, 97, 100] {
+                for ring in [0u32, 1, 2, 5, 40] {
+                    let mask = noisy_mask(w, h, (w * 31 + h) as u64 + density, density as u64);
+                    assert_eq!(
+                        Trimap::from_mask(&mask, ring).labels,
+                        brute_force(&mask, ring),
+                        "{w}x{h}, density {density}, ring {ring}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_uniform_mask_has_no_ring() {
+        for fill in [0u8, 255] {
+            let mask = Mask { width: 16, height: 16, data: vec![fill; 256] };
+            let expected =
+                if fill == 0 { TrimapLabel::Background } else { TrimapLabel::Foreground };
+            assert!(Trimap::from_mask(&mask, 4).labels.iter().all(|&l| l == expected));
+        }
+    }
 }
