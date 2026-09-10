@@ -1,6 +1,6 @@
 //! Default (double-click) flow: find the desktop input folder, process, report in the console.
 
-use super::{batch, console, desktop, i18n};
+use super::{batch, console, desktop, header, i18n};
 use std::io::Write;
 use std::path::Path;
 
@@ -10,6 +10,7 @@ const BACKUP_FOLDER: &str = "CSP-BACKUP";
 
 pub fn run() {
     console::init();
+    header::print();
     let lang = console::ui_language();
     let desktop = desktop::desktop_dir();
     let input = desktop.join(INPUT_FOLDER);
@@ -32,7 +33,7 @@ pub fn run() {
 
     let _ = std::fs::create_dir_all(&output);
     let _ = std::fs::create_dir_all(&backup);
-    println!("\n{}", i18n::processing(lang));
+    println!("{}", i18n::processing(lang));
     let summary = batch::run(&input, &output, &backup);
     println!(
         "\n{}",
