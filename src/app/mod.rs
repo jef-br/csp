@@ -3,6 +3,7 @@
 pub mod batch;
 pub mod i18n;
 pub mod progress;
+pub mod theme;
 
 #[cfg(windows)]
 mod console;
