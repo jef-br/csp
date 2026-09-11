@@ -10,7 +10,7 @@ One crate, one `src/` tree.
 
 ## Ships as one hardened exe, no install
 A hard requirement, met — not optional, and never solved by putting a file beside the exe.
-`cargo build --release` produces `csp.exe` and nothing else. The `.onnx` model
+`cargo build --release` produces the single main exe and nothing else. The `.onnx` model
 (`shot_classifier::birefnet`) and `onnxruntime.dll` (`core::runtime`) are gitignored, live at the
 repo root, and are compiled into the binary — a missing one breaks the *build*, not the run. The
 model is embedded **encrypted**: `build.rs` encrypts it under a per-build key (shared cipher in

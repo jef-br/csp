@@ -1,27 +1,21 @@
 //! Pass 2: pixel-perfect edge refinement.
 //!
 //! Only call [`refine_edge`] for edges [`super::gate::gate`] already
-//! flagged — this does the real work pass 1 exists to avoid paying for
+//! flagged - this does the real work pass 1 exists to avoid paying for
 //! on every instance:
 //!
-//! 1. Intersect the working-resolution mask with the border band — not
-//!    the whole mask, just the slice near this edge — to find where
-//!    along the edge the subject actually reaches.
-//! 2. Map that region back to the original image and crop it at full
-//!    resolution. This is an in-memory crop; the region is also reported
-//!    on [`EdgeRefinement::crop_region`] for callers that want to export
-//!    or visualize it.
+//! 1. Intersect the working-resolution mask with the border band to find where along the edge the subject actually reaches.
+//!    (not the whole mask, just the slice near this edge) 
+//! 2. Map that region back to the original image and crop it at full res.
+//!    In-memory crop; the region is also reported on [`EdgeRefinement::crop_region`] for callers that want it.
 //! 3. Build a trimap from the upsampled working-resolution mask:
-//!    interior = foreground, exterior = background, a ring around the
-//!    boundary = unknown (this ring is exactly where the upsampling
-//!    made the mask inaccurate).
-//! 4. Classify each unknown pixel by color distance to sampled
-//!    foreground vs. background color, at full resolution.
-//! 5. The refined mask, not the raw BiRefNet mask, says whether the
-//!    boundary reaches the border at all.
+//!    - interior = foreground
+//!    - exterior = background, a ring around the
+//!    - boundary = unknown (= where upsampling made the mask inaccurate).
+//! 4. Classify each unknown pixel by color distance to sampled FGC vs. BGC, at full res.
+//! 5. The refined mask, not the raw BiRefNet mask, says whether the boundary reaches the border at all.
 //! 6. A contact that reaches the border still has to earn the verdict:
-//!    [`is_graze`] rejects the ones where the silhouette runs along the
-//!    edge rather than off it.
+//!    [`is_graze`] rejects the ones where the silhouette runs along the edge rather than off it.
 
 use super::geometry::{Edge, EdgeView, Grid, Rect};
 use super::sampling::{sample_background_color, ColorStats};
@@ -30,19 +24,15 @@ use image::{Rgb, RgbImage};
 
 /// Everything pass 2 needs for one instance.
 pub struct RefinementInput<'a> {
-    /// The preprocessor's working-resolution image — what the
-    /// segmentation model actually ran on.
+    /// Preprocessor working-resolution image (what the segmentation model runs on)
     pub working_image: &'a RgbImage,
-    /// The full original-resolution image, prior to the preprocessor's
-    /// resize.
+    /// Full res OG image, prior to the preprocessor's resize.
     pub original_image: &'a RgbImage,
-    /// Detected instance; `mask`/`bbox` are in `working_image`'s
-    /// coordinate space.
+    /// Detected instance; `mask`/`bbox` are in `working_image`'s coordinate space.
     pub instance: &'a Instance,
 }
 
-/// Tuning knobs, expressed in working-resolution pixels so they stay
-/// meaningful regardless of the original image's size.
+/// Tuning knobs, expressed in working-resolution pixels so they stay meaningful regardless of the original image's size.
 #[derive(Debug, Clone, Copy)]
 pub struct RefineParams {
     /// Width of the border band pass 1 already gated on.
@@ -75,12 +65,10 @@ impl Default for RefineParams {
 #[derive(Debug, Clone)]
 pub struct EdgeRefinement {
     pub edge: Edge,
-    /// Pixel-perfect verdict: does the refined subject boundary reach
-    /// the actual image border on this edge?
+    /// Pixel-perfect verdict: does the refined subject boundary reach the actual image border on this edge?
     pub touching: bool,
     /// The region refinement worked in, in original-image coordinates.
-    /// Not used in `touching`; exposed for callers that export or
-    /// visualize the refined area.
+    /// Not used in `touching`; exposed for callers that export or visualize the refined area.
     pub crop_region: Rect,
 }
 
@@ -90,8 +78,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
     let scale_y = input.original_image.height() as f32 / input.working_image.height() as f32;
     let scale = scale_x.max(scale_y);
 
-    // Step 1: intersect the mask with the border band, in edge-canonical
-    // working-resolution space.
+    // Step 1: intersect the mask with the border band, in edge-canonical working-resolution space.
     let mask_view = EdgeView::new(mask, edge);
     let band_h = params.band_px.min(mask_view.height());
     let mut min_cx: Option<u32> = None;
@@ -108,8 +95,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
     }
 
     let Some(min_cx) = min_cx else {
-        // Pass 1 flagged the mask's bbox as near this edge, but the mask
-        // itself doesn't actually reach the band — nothing to refine.
+        // Pass 1 flagged the mask's bbox as near this edge, but the mask itself doesn't actually reach the band - nothing to refine.
         return EdgeRefinement {
             edge,
             touching: false,
@@ -136,8 +122,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
     );
     let crop = crop_image(input.original_image, original_roi);
 
-    // Step 3: trimap from the working-resolution mask, upsampled into
-    // crop coordinates.
+    // Step 3: trimap from the working-resolution mask, upsampled into crop coordinates.
     let upsampled_mask = mask.upsample_region_nearest(working_roi, crop.width(), crop.height());
     let ring_px = ((params.safety_px as f32) * scale).round().max(2.0) as u32;
     let trimap = Trimap::from_mask(&upsampled_mask, ring_px);
@@ -150,7 +135,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
 
     let refined = match (fg, bg) {
         (Some(fg), Some(bg)) => trimap.resolve(&crop, fg, bg),
-        // Not enough samples to refine confidently — fall back to the
+        // Not enough samples to refine confidently - fall back to the
         // upsampled mask rather than guessing at a verdict.
         _ => upsampled_mask,
     };
@@ -174,7 +159,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
 
 /// Does the subject merely graze this edge rather than bleed off it?
 ///
-/// A subject the frame truncates holds the same coverage at every depth —
+/// A subject the frame truncates holds the same coverage at every depth -
 /// its silhouette meets the border head-on and simply carries on past it.
 /// One that grazes runs *along* the border and curves away, so coverage
 /// grows the deeper you look. Comparing mean coverage in a narrow band
@@ -184,12 +169,12 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
 /// Measured on the *refined* mask, in crop coordinates, so `wide` and
 /// `narrow` arrive already scaled to full resolution. It has to be the
 /// refined mask: where matting moved the boundary, the raw mask's profile
-/// describes a silhouette that is no longer the one being judged — a raw
+/// describes a silhouette that is no longer the one being judged - a raw
 /// mask stopping short of a border its subject really reaches has zero
 /// coverage in the narrow band and would read as a graze every time.
 ///
-/// The ratio does not care how wide a column range it is taken over — the
-/// width cancels — so the crop spanning only the contact region rather
+/// The ratio does not care how wide a column range it is taken over - the
+/// width cancels - so the crop spanning only the contact region rather
 /// than the whole edge leaves it unchanged.
 fn is_graze(mask: &Mask, edge: Edge, wide_px: u32, narrow_px: u32, ratio_max: f32) -> bool {
     let view = EdgeView::new(mask, edge);
@@ -232,20 +217,20 @@ struct Trimap {
 
 impl Trimap {
     /// `ring_px` is the width of the "unknown" ring straddling the mask
-    /// boundary, in crop-resolution pixels — this ring is exactly where
+    /// boundary, in crop-resolution pixels - this ring is exactly where
     /// the working-resolution mask's upsampling made it inaccurate.
     ///
     /// A pixel is in the ring when some pixel within `ring_px` of it,
     /// along a row or a column, holds the opposite value. Asking that
     /// pixel by pixel meant walking `ring_px` steps in four directions
-    /// each time, and `ring_px` scales with the original — tens of steps
+    /// each time, and `ring_px` scales with the original - tens of steps
     /// on a large photo, never short-circuited for the uniform
     /// background that dominates the crop.
     ///
     /// Walking runs instead answers it in one pass per axis. Within a run
     /// of equal values the nearest opposite pixel is whatever sits just
     /// past the run's end, so the ring is the first and last `ring_px`
-    /// pixels of every run that actually has a neighbouring run — no
+    /// pixels of every run that actually has a neighbouring run - no
     /// per-pixel search at all.
     fn from_mask(mask: &Mask, ring_px: u32) -> Trimap {
         let (w, h) = (mask.width, mask.height);
@@ -409,7 +394,7 @@ mod trimap_tests {
         labels
     }
 
-    /// A cheap deterministic bit source — enough to shake out run
+    /// A cheap deterministic bit source - enough to shake out run
     /// boundaries at every offset without pulling in a rng dependency.
     fn noisy_mask(w: u32, h: u32, seed: u64, density: u64) -> Mask {
         let mut state = seed | 1;
