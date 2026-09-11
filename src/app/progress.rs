@@ -12,15 +12,18 @@
 //! Nothing else writes to stdout while the batch runs (failures are collected, not printed), so
 //! the block stays where it was first drawn.
 
-use super::theme::{ORANGE, ORANGE_DIM, RESET};
+use super::i18n::{self, Lang};
+use super::theme::{self, BOLD, RESET, TEAL};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-const WIDTH: usize = 40;
+/// Cells in the bar. The bar is *always* this wide: the percentage is drawn over the cells it
+/// needs rather than appended, so the block below it never shifts.
+const WIDTH: usize = 50;
 const FULL: char = '\u{2588}'; // █  done
-const EMPTY: char = '\u{2591}'; // ░  remaining
+const EMPTY: char = '\u{2591}'; // ░ remaining — same teal, sparser glyph
 const MIN_REDRAW: Duration = Duration::from_millis(66); // ~15 Hz
 /// Move to the top of the block and clear everything below it.
 const ERASE_DOWN: &str = "\x1b[0J";
@@ -34,12 +37,14 @@ pub struct Progress {
     enabled: bool,
     /// Lines held under the bar, repainted with it.
     footer: Vec<String>,
+    /// UI language, for the `remaining` readout beside the bar.
+    lang: Lang,
 }
 
 impl Progress {
     /// Draw the first frame — bar plus `footer` — and hand back a handle the workers tick. Pass an
     /// empty `footer` for a bar with nothing beneath it.
-    pub fn new(total: usize, footer: &[String]) -> Progress {
+    pub fn new(total: usize, footer: &[String], lang: Lang) -> Progress {
         let progress = Progress {
             total,
             done: AtomicUsize::new(0),
@@ -48,6 +53,7 @@ impl Progress {
             gate: Mutex::new(Instant::now() - MIN_REDRAW),
             enabled: total > 0 && std::io::stdout().is_terminal(),
             footer: footer.to_vec(),
+            lang,
         };
         if progress.enabled {
             let mut out = std::io::stdout().lock();
@@ -92,32 +98,96 @@ impl Progress {
             let up = self.footer.len() + 1;
             let _ = write!(out, "\x1b[{up}A\r{ERASE_DOWN}");
         }
-        let _ = writeln!(out, "{}{}", self.bar(done), self.label(done));
+        let indent = " ".repeat(theme::INDENT);
+        let _ = writeln!(out, "{indent}{}{}", self.bar(done), self.label(done));
         for line in &self.footer {
             let _ = writeln!(out, "{line}");
         }
         let _ = out.flush();
     }
 
-    /// `40%, 01:12 remaining` — empty on the closing frame, where nothing is left to wait for.
+    /// `  08m25s remaining`, sitting to the right of the bar. Empty on the first frame (no
+    /// estimate yet) and on the closing one (nothing left to wait for). The percentage is not
+    /// here — it lives inside the bar.
     fn label(&self, done: usize) -> String {
         if done == 0 || done >= self.total {
             return String::new();
         }
         let per = self.start.elapsed().as_secs_f64() / done as f64;
         let rem = (per * (self.total - done) as f64).round() as u64;
-        let pct = (done as f64 / self.total as f64 * 100.0) as u32;
-        format!(" {pct}%, {:02}:{:02} remaining", rem / 60, rem % 60)
+        format!(
+            "  {TEAL}{:02}m{:02}s {}{RESET}",
+            rem / 60,
+            rem % 60,
+            i18n::remaining(self.lang)
+        )
     }
 
-    /// The bar itself: filled cells in solid orange, the remainder in a dim orange shade.
+    /// The bar: `WIDTH` teal cells, solid up to `done` and hatched after it, with the percentage
+    /// drawn *over* the cells it needs. Pinning the label's start at `WIDTH - len` keeps the bar
+    /// exactly `WIDTH` wide at 100%, where it ends up sitting on top of the filled cells.
     fn bar(&self, done: usize) -> String {
         let frac = done as f64 / self.total.max(1) as f64;
         let filled = ((frac * WIDTH as f64).round() as usize).min(WIDTH);
+        let cells: Vec<char> = (0..WIDTH)
+            .map(|i| if i < filled { FULL } else { EMPTY })
+            .collect();
+
+        let pct = format!("{}%", (frac * 100.0).round() as u32);
+        let len = pct.chars().count().min(WIDTH);
+        let at = filled.min(WIDTH - len);
         format!(
-            "{ORANGE}{}{ORANGE_DIM}{}{RESET}",
-            String::from(FULL).repeat(filled),
-            String::from(EMPTY).repeat(WIDTH - filled),
+            "{TEAL}{}{BOLD}{pct}{RESET}{TEAL}{}{RESET}",
+            cells[..at].iter().collect::<String>(),
+            cells[at + len..].iter().collect::<String>(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `Progress` that never touches stdout, for exercising [`Progress::bar`] alone.
+    fn silent(total: usize) -> Progress {
+        Progress {
+            total,
+            done: AtomicUsize::new(0),
+            start: Instant::now(),
+            gate: Mutex::new(Instant::now()),
+            enabled: false,
+            footer: Vec::new(),
+            lang: Lang::En,
+        }
+    }
+
+    /// Printed cells, ignoring the SGR escapes woven through the bar.
+    fn visible(s: &str) -> usize {
+        let mut cells = 0;
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                for c in chars.by_ref() {
+                    if c == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                cells += 1;
+            }
+        }
+        cells
+    }
+
+    /// The frame under the bar only stays put if the bar never changes width — including at 100%,
+    /// where the percentage has to be drawn over the filled cells rather than after them.
+    #[test]
+    fn bar_is_always_forty_cells() {
+        for total in [1usize, 7, 37, 40, 100, 999] {
+            for done in 0..=total {
+                let bar = silent(total).bar(done);
+                assert_eq!(visible(&bar), WIDTH, "total={total}, done={done}");
+            }
+        }
     }
 }

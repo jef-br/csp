@@ -3,6 +3,7 @@
 //! `input` — each becomes a same-named subfolder of both `output` and `backup` — matching the
 //! folder-bootstrap flow in `docs/diagrams/JB-A2B.drawio.svg`.
 
+use super::i18n::Lang;
 use super::progress::Progress;
 use csp::core;
 use rayon::prelude::*;
@@ -25,7 +26,13 @@ const SUPPORTED: &[&str] = &["jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp"]
 /// Process every supported image in `input` into `output`, in parallel across cores. Successfully
 /// processed originals are moved to `backup`; failures are left in `input` untouched. `footer` is
 /// the block of lines drawn under the progress bar and held in place for the whole run.
-pub fn run(input: &Path, output: &Path, backup: &Path, footer: &[String]) -> Summary {
+pub fn run(
+    input: &Path,
+    output: &Path,
+    backup: &Path,
+    footer: &[String],
+    lang: Lang,
+) -> Summary {
     let start = Instant::now();
     let _ = std::fs::create_dir_all(output);
     let _ = std::fs::create_dir_all(backup);
@@ -33,7 +40,7 @@ pub fn run(input: &Path, output: &Path, backup: &Path, footer: &[String]) -> Sum
     let ok = AtomicUsize::new(0);
     let failures = Mutex::new(Vec::new());
     let jobs = collect(input, output, backup);
-    let progress = Progress::new(jobs.len(), footer);
+    let progress = Progress::new(jobs.len(), footer, lang);
     jobs.par_iter().for_each(|(src, dest, backup_dest)| {
         if let Some(parent) = dest.parent() {
             let _ = std::fs::create_dir_all(parent);

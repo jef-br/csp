@@ -31,17 +31,22 @@ use image::{imageops::FilterType, RgbImage};
 use ort::session::Session;
 use ort::value::Tensor;
 
-/// The BiRefNet weights, compiled into the executable.
+/// The BiRefNet weights, encrypted at rest and compiled into the executable.
 ///
-/// CSP ships as one file, so the model is part of the binary rather than a `.onnx` beside it. The
-/// path is fixed and the file is gitignored: a missing model is a *build* failure naming the file,
-/// which is the right time to find out — the alternative is an exe that builds fine and then can
-/// never classify anything.
+/// CSP ships as one file, so the model is part of the binary rather than a `.onnx` beside it. It is
+/// stored encrypted: `build.rs` reads the gitignored plaintext `birefnet_lite_512.onnx` at the repo
+/// root, encrypts it under a per-build key, and emits the blob to `OUT_DIR` — so the plaintext model
+/// is never a static string in the image and does not carve out with `binwalk`/`strings`. A missing
+/// plaintext is a *build* failure naming the file, which is the right time to find out.
 ///
-/// The bytes live in the exe's mapped image, so they cost address space rather than committed
-/// memory until ONNX Runtime copies them into its own session at load.
-static MODEL_BYTES: &[u8] =
-    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/birefnet_lite_512.onnx"));
+/// This is obfuscation, not secrecy: [`MODEL_KEY`]/[`MODEL_NONCE`] ship in the binary too (also
+/// emitted by `build.rs`, also out of git). [`load`] decrypts into a heap buffer that lives only
+/// until ONNX Runtime copies the graph into its session; the plaintext never touches disk.
+static ENC_MODEL: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/birefnet_lite_512.onnx.enc"));
+
+// MODEL_KEY / MODEL_NONCE, generated fresh for this build by build.rs (never committed).
+include!(concat!(env!("OUT_DIR"), "/model_key.rs"));
 
 const IMAGENET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const IMAGENET_STD: [f32; 3] = [0.229, 0.224, 0.225];
@@ -87,11 +92,13 @@ impl BiRefNetModel {
 
     /// Loads the embedded model.
     ///
-    /// There is nothing to find on disk: the weights are [`MODEL_BYTES`], compiled in. Failure
-    /// here means the runtime cannot build a session from that graph, which is fatal for the run —
-    /// see `core::preflight`. Call [`Self::init_runtime`] first.
+    /// There is nothing to find on disk: the weights are [`ENC_MODEL`], compiled in. They are
+    /// decrypted into a heap buffer that ORT copies into its session, then dropped — the plaintext
+    /// model never lands on disk. Failure here means the runtime cannot build a session from that
+    /// graph, which is fatal for the run — see `core::preflight`. Call [`Self::init_runtime`] first.
     pub fn load(config: BiRefNetConfig) -> Result<Self, String> {
-        Self::build(config, |b| b.commit_from_memory(MODEL_BYTES)).map_err(|e| e.to_string())
+        let model = super::cipher::decrypt(ENC_MODEL, &MODEL_KEY, &MODEL_NONCE);
+        Self::build(config, |b| b.commit_from_memory(&model)).map_err(|e| e.to_string())
     }
 
     /// Loads a model from disk instead of the embedded one.

@@ -1,9 +1,9 @@
 //! Batch product-image repositioner.
 //!
-//! Default (no args): watches the desktop `CSP-INPUT` folder, writes to `CSP-OUTPUT` and moves the
-//! originals to `CSP-BACKUP`. With path args (`<input_dir> <output_dir> [backup_dir]`) it runs a
+//! Default (no args): watches the desktop `PPRONI-INPUT` folder, writes to `PPRONI-OUTPUT` and moves the
+//! originals to `PPRONI-BACKUP`. With path args (`<input_dir> <output_dir> [backup_dir]`) it runs a
 //! plain batch — used for development and testing on non-Windows hosts. Without a third arg the
-//! backup folder is `CSP-BACKUP` beside the output folder.
+//! backup folder is `PPRONI-BACKUP` beside the output folder.
 
 mod app;
 
@@ -26,9 +26,11 @@ fn main() {
             None => output
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."))
-                .join("CSP-BACKUP"),
+                .join("PPRONI-BACKUP"),
         };
-        let summary = app::batch::run(&input, &output, &backup, &[]);
+        // English: this path is piped, so the bar — and the only localized string it would
+        // reach for — is disabled anyway.
+        let summary = app::batch::run(&input, &output, &backup, &[], app::i18n::Lang::En);
         println!(
             "{} ok, {} failed, {:.2}s",
             summary.ok, summary.failed, summary.seconds

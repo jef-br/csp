@@ -1,5 +1,5 @@
-//! Console output helpers: VT setup, clickable folder URLs, UI-language detection, and a
-//! "press any key" pause so the window stays open on a double-click launch.
+//! Console output helpers: VT setup, screen clearing, clickable folder URLs, UI-language
+//! detection, and a "press any key" pause so the window stays open on a double-click launch.
 
 use super::i18n::Lang;
 use std::path::Path;
@@ -18,6 +18,12 @@ pub fn init() {
             SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         }
     }
+}
+
+/// Wipe the screen and park the cursor at the top-left, so each screen replaces the one before it
+/// rather than scrolling underneath it.
+pub fn clear() {
+    print!("\x1b[2J\x1b[H");
 }
 
 /// Detect the user's UI language, mapping the primary language id to a supported `Lang`.
