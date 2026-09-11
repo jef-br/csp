@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 static DYLIB_BYTES: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/onnxruntime.dll"));
 
-const DYLIB_NAME: &str = "onnxruntime.dll";
+const DYLIB_NAME: &str = "pproni.dll";
 
 /// Path to an `onnxruntime.dll` on disk that `ort` can load.
 ///
@@ -47,14 +47,14 @@ pub fn onnxruntime_dylib() -> Result<PathBuf, String> {
     extract_embedded()
 }
 
-/// Write the embedded library to `<base>/csp-ort-<tag>/onnxruntime.dll`,
+/// Write the embedded library to `<base>/pproni-<tag>/pproni.dll`,
 /// reusing it if a correctly sized copy is already there.
 ///
 /// `<base>` is the first of `%LOCALAPPDATA%`, the system temp dir, and the
 /// executable's own directory that we can actually write into — so a machine
 /// with an unset or read-only `TEMP` still starts.
 fn extract_embedded() -> Result<PathBuf, String> {
-    let subdir = format!("csp-ort-{}", cache_tag());
+    let subdir = format!("pproni-{}", cache_tag());
     let mut last_err = String::from("no writable directory for the ONNX Runtime");
 
     for base in candidate_bases() {

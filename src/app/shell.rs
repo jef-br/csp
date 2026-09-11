@@ -1,24 +1,24 @@
 //! Default (double-click) flow: find the desktop input folder, process, report in the console.
 //!
-//! Two screens share one banner. Idle: the input folder in a box, then the "drop images and run me
-//! again" callout. Running: the progress bar, then the "CTRL+C to interrupt" callout, then the
-//! summary and the output folder. `theme` owns every rule, box and colour used here.
+//! Three screens, one frame. Each opens with the banner and two status lines, closes with a rule,
+//! a callout and a rule, and carries one body between them: the input folder (start), the progress
+//! bar (running), or the output folder (finish). Each clears the console first, so a screen
+//! replaces the one before it instead of scrolling under it. `theme` owns every rule and colour.
 
 use super::{batch, console, desktop, header, i18n, theme};
 use std::io::Write;
 use std::path::Path;
 
-const INPUT_FOLDER: &str = "CSP-INPUT";
-const OUTPUT_FOLDER: &str = "CSP-OUTPUT";
-const BACKUP_FOLDER: &str = "CSP-BACKUP";
+const INPUT_FOLDER: &str = "PPRONI-INPUT";
+const OUTPUT_FOLDER: &str = "PPRONI-OUTPUT";
+const BACKUP_FOLDER: &str = "PPRONI-BACKUP";
 
-/// Left margin of the folder box, matching the indent in `docs`-side layout.
+/// Left margin of the folder line, matching the rules and the bar.
 const INDENT: &str = "  ";
 
 pub fn run() {
     console::init();
     let lang = console::ui_language();
-    header::print(lang);
 
     let desktop = desktop::desktop_dir();
     let input = desktop.join(INPUT_FOLDER);
@@ -32,17 +32,24 @@ pub fn run() {
 
     // First run / nothing to do: point the user at the input folder and wait.
     if created || !has_any_image(&input) {
+        open_screen(&drop_prompt_lines(lang));
+        print_folder(&input, theme::TEAL);
         println!();
-        print_folder(&input);
-        println!();
-        print_callout(i18n::ready_hint(lang));
+        print_footer(i18n::close_line(lang));
         console::pause();
         return;
     }
 
     let _ = std::fs::create_dir_all(&output);
     let _ = std::fs::create_dir_all(&backup);
-    println!("\n{}{}{}", theme::WHITE, i18n::processing(lang), theme::RESET);
+
+    open_screen(&[
+        format!("{}{}", i18n::backup_label(lang), backup.display()),
+        format!("{}{}", i18n::output_label(lang), output.display()),
+    ]);
+    // The blank line above the bar. `Progress` draws from the bar down and rewinds only over its
+    // own block, so this one has to be printed here — it is never repainted.
+    println!();
 
     // The bar is drawn first and the callout under it stays put; `Progress` walks the cursor back
     // over these lines on every redraw, so they have to be handed over rather than printed here.
@@ -52,36 +59,60 @@ pub fn run() {
         theme::callout(i18n::interrupt_hint(lang)),
         theme::rule(),
     ];
-    let summary = batch::run(&input, &output, &backup, &footer);
+    let summary = batch::run(&input, &output, &backup, &footer, lang);
 
+    open_screen(&i18n::finished(
+        lang,
+        summary.seconds,
+        summary.ok,
+        summary.failed,
+    ));
+    print_folder(&output, theme::ORANGE);
     println!();
+    print_footer(i18n::close_line(lang));
+
+    // Below the frame, so a clean run shows the screen exactly as designed. The count is already
+    // carried by the "N skipped" half of the summary.
     for line in &summary.failures {
-        println!("{}{line}{}", theme::GREY, theme::RESET);
+        println!("{}{line}{}", theme::DARK, theme::RESET);
     }
-    println!(
-        "{}{}{}\n",
-        theme::WHITE,
-        i18n::finished(lang, summary.seconds, summary.ok, summary.failed),
-        theme::RESET
-    );
-    print_folder(&output);
-    println!();
-    print_callout(i18n::close_line(lang));
     console::pause();
 }
 
-/// The folder path in its own box: magenta, indented, and clickable under Windows Terminal.
-fn print_folder(path: &Path) {
-    let text = path.display().to_string();
-    let paint = format!("{}{}", theme::BOLD, theme::MAGENTA);
-    let url = console::folder_url(path);
-    for row in theme::boxed_linked(&[text.as_str()], &paint, url.as_deref()) {
-        println!("{INDENT}{row}");
-    }
+/// `drop_prompt` as owned strings — the other two screens build their status lines with
+/// `format!`, so [`open_screen`] takes `String`s and this one has to match.
+fn drop_prompt_lines(lang: i18n::Lang) -> [String; 2] {
+    i18n::drop_prompt(lang).map(str::to_owned)
 }
 
-/// A `⏵` line bracketed by two full-width rules.
-fn print_callout(text: &str) {
+/// Wipe the console and draw the top of the frame: banner, two status lines, closing rule, and
+/// the blank line the body sits on. The blank belongs here rather than to each caller — the
+/// running screen's body is drawn by `Progress`, which starts at the bar. The caller follows with
+/// the body and [`print_footer`].
+fn open_screen(status: &[String; 2]) {
+    console::clear();
+    header::print();
+    for line in status {
+        println!("{}{line}{}", theme::WHITE, theme::RESET);
+    }
+    println!("{}", theme::rule());
+    println!();
+}
+
+/// The folder path on its own indented line, bold in `colour` and clickable under Windows
+/// Terminal. `colour` differs per screen — teal for the input folder, orange for the output one.
+/// The hyperlink is BEL-terminated OSC-8 — Windows Terminal takes either terminator.
+fn print_folder(path: &Path, colour: &str) {
+    let painted = format!("{}{}{}{}", theme::BOLD, colour, path.display(), theme::RESET);
+    let line = match console::folder_url(path) {
+        Some(url) => format!("\x1b]8;;{url}\x07{painted}\x1b]8;;\x07"),
+        None => painted,
+    };
+    println!("{INDENT}{line}");
+}
+
+/// The bottom of the frame: a callout line (marker, `text`, version slug) between two rules.
+fn print_footer(text: &str) {
     println!("{}", theme::rule());
     println!("{}", theme::callout(text));
     println!("{}", theme::rule());

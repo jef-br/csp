@@ -23,6 +23,7 @@
 //! [`classify_instance`] the preprocessor's two resolutions.
 
 pub mod birefnet;
+mod cipher;
 pub mod gate;
 pub mod geometry;
 pub mod refine;

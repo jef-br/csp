@@ -17,7 +17,7 @@ diagram drifted.
 ## 1. Pipeline
 
 `core::process_file` runs five stages in order. `app::batch::run` fans this over every image in the
-input folder with `rayon`; on success the source file is moved to the backup folder (`CSP-BACKUP`),
+input folder with `rayon`; on success the source file is moved to the backup folder (`PPRONI-BACKUP`),
 on failure it is left in place.
 
 ```
@@ -30,7 +30,7 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 | **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + working copy) |
 | **classify** | `core::classify` (private) | `Prepared` → `Option<(ShotClassification, Mask)>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
-| **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source moved to `CSP-BACKUP` |
+| **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source moved to `PPRONI-BACKUP` |
 
 `classify` carries the segmentation `Mask` out with the verdict; the exporter needs it for the
 debug tags below.
@@ -62,15 +62,16 @@ silently processed as a clean free-standing shot.
 
 | Module | Surface | Notes |
 |---|---|---|
-| `app::batch` | `run(input, output, backup) -> Summary`, `Summary` | rayon fan-out, one level of subfolder recursion; drives `progress` |
-| `app::progress` | `Progress`, `new`, `tick`, `note_failure` | in-place unicode bar, throttled ~15 Hz via non-blocking `try_lock`; self-disables when stdout is not a TTY |
-| `app::shell` | `run()` | Windows double-click flow: desktop `CSP-INPUT` → `CSP-OUTPUT`, originals → `CSP-BACKUP` |
-| `app::header` | `print()` | Windows-only; hand-tuned startup banner (logo + name + summary) |
-| `app::console` | `init`, `ui_language`, `folder_link`, `pause` | Windows-only; ANSI, OSC-8 links, UI language |
+| `app::batch` | `run(input, output, backup, footer, lang) -> Summary`, `Summary` | rayon fan-out, one level of subfolder recursion; drives `progress` |
+| `app::progress` | `Progress`, `new(total, footer, lang)`, `tick` | in-place unicode bar, always 40 cells with the `NN%` drawn over them; throttled ~15 Hz via non-blocking `try_lock`; self-disables when stdout is not a TTY |
+| `app::shell` | `run()` | Windows double-click flow: desktop `PPRONI-INPUT` → `PPRONI-OUTPUT`, originals → `PPRONI-BACKUP`. Draws the three screens |
+| `app::header` | `print()` | Windows-only; hand-tuned banner (block logo + name + tagline), same on all three screens |
+| `app::theme` | `WIDTH`, the palette, `rule`, `callout`, `slug` | 24-bit ANSI matching the design hex; owns the frame every screen is drawn in |
+| `app::console` | `init`, `clear`, `ui_language`, `folder_url`, `pause` | Windows-only; ANSI, OSC-8 links, UI language |
 | `app::desktop` | `desktop_dir()` | Windows-only |
-| `app::i18n` | `Lang`, `drop_prompt`, `processing`, `finished`, `close_line` | EN/ES/FR/NL/IT/DE |
+| `app::i18n` | `Lang`, `drop_prompt`, `close_line`, `interrupt_hint`, `backup_label`, `output_label`, `remaining`, `finished` | EN/ES/FR/NL/IT/DE |
 
-`console`, `desktop`, `header` and `shell` are `#[cfg(windows)]`; `progress` is cross-platform. On other hosts only the two-argument CLI form
+`console`, `desktop`, `header` and `shell` are `#[cfg(windows)]`; `progress` and `theme` are cross-platform. On other hosts only the two-argument CLI form
 (`csp <input_dir> <output_dir>`) is available, and `i18n` reads as dead code because nothing calls
 it — that is expected, not drift.
 
@@ -173,16 +174,23 @@ module docstring.
 **CSP ships as one hardened executable with no installation step. This is a hard requirement.**
 
 Hardening is already in place in `Cargo.toml`'s release profile — fat LTO, one codegen unit,
-symbols stripped, no PDB, abort on panic — and is anti-RE as much as size.
+symbols and debuginfo stripped, no PDB, abort on panic — and is anti-RE as much as size. The
+embedded model is also **encrypted at rest** (see below), so it no longer carves out of the exe
+with `binwalk`/`strings`. This is obfuscation, not secrecy: the key ships in the binary, so it
+raises the effort bar without pretending a determined analyst can't recover the weights.
 
 **Met.** `cargo build --release` produces one `csp.exe` (~195MB) and nothing else. Two things are
 compiled in:
 
-- **The model.** `shot_classifier::birefnet` embeds `birefnet_lite_512.onnx` with `include_bytes!`
-  and loads it through `Session::commit_from_memory`.
+- **The model.** `shot_classifier::birefnet` embeds `birefnet_lite_512.onnx` and loads it through
+  `Session::commit_from_memory`. It is stored **encrypted**: `build.rs` reads the plaintext at the
+  repo root, encrypts it under a per-build key (a ChaCha20 keystream in `shot_classifier::cipher`,
+  shared with the build script by path), and `include_bytes!`'s the encrypted blob from `OUT_DIR`;
+  `birefnet::load` decrypts into a heap buffer only for as long as ORT needs to copy the graph in.
+  The plaintext model is never a static string in the image and never touches disk.
 - **The ONNX Runtime.** `core::runtime` embeds `onnxruntime.dll` the same way. `ort`'s
   `load-dynamic` needs a real path to `LoadLibrary`, so at first use the bytes are written once to
-  `<%LOCALAPPDATA%|temp>/csp-ort-<tag>/onnxruntime.dll` and that path is handed to `ort::init_from`.
+  `<%LOCALAPPDATA%|temp>/pproni-<tag>/pproni.dll` and that path is handed to `ort::init_from`.
   The `<tag>` is the library's size plus a content hash: a rebuilt runtime lands in a fresh
   directory, repeat runs reuse the file already there, and the write is atomic (temp name then
   rename) so concurrent CSP processes don't corrupt it.
@@ -239,7 +247,7 @@ What each container now says:
 
 - **App** — launch, `core::preflight` (unpack the embedded runtime, build the session, abort on
   failure), the desktop folder bootstrap, and `batch::run`'s rayon fan-out with its one level of
-  subfolder recursion mirrored into `CSP-OUTPUT` and `CSP-BACKUP`.
+  subfolder recursion mirrored into `PPRONI-OUTPUT` and `PPRONI-BACKUP`.
 - **Preprocessor** — decode + EXIF, the unconditional alpha flatten onto white, the sRGB branch,
   and `Prepared { original, working }`.
 - **Shot Classifier** — segmentation, pass-1 `gate`, pass-2 `refine_edge`, the graze test, and the
@@ -247,7 +255,7 @@ What each container now says:
   its own, because it is not the same thing as an empty edge list.
 - **Processor** — `Route::select`'s two questions and the three routes behind them.
 - **Exporter** — `resize::to_envelope`, the `CSP_DEBUG_TAGS` branch, the JPEG save, and the move of
-  the original into `CSP-BACKUP` on success.
+  the original into `PPRONI-BACKUP` on success.
 - **Dev harness** — `examples/run_dir.rs`, replacing the proposed `CSP-Analyzer` container whose
   target (`src/bin/csp_analyzer.rs`) was deleted with the classical detector.
 
