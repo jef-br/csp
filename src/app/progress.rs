@@ -4,13 +4,17 @@
 //! file from whatever worker thread finished it. Redraws are throttled to ~15 Hz through a
 //! non-blocking `try_lock`: a worker that can't take the gate just bumps the counter and returns,
 //! so the bar never sits on the batch's critical path. The bar disables itself when stdout is not
-//! a terminal, which keeps it out of the piped `csp <in> <out>` dev path.
+//! a terminal, which keeps it out of the piped `<exe> <in> <out>` dev path.
 //!
 //! The footer is the block the shell wants held under the bar — the rule / callout / rule that
-//! tells the user how to interrupt. Bar and footer are repainted together as one unit: each frame
-//! walks the cursor back to the top of the block, erases to the end of the screen, and reprints.
-//! Nothing else writes to stdout while the batch runs (failures are collected, not printed), so
-//! the block stays where it was first drawn.
+//! tells the user how to interrupt. It is drawn once, with the first frame, and then left alone:
+//! only the bar line ever changes, so every later frame steps the cursor up to that one line,
+//! rewrites it, and steps back down. Nothing else writes to stdout while the batch runs (failures
+//! are collected, not printed), so the block stays where it was first drawn.
+//!
+//! Each frame goes out in a single `write_all`. Rust's stdout is a `LineWriter` and flushes on
+//! every newline it is handed, so printing the block line by line put a half-drawn frame on screen
+//! fifteen times a second — which the terminal is free to composite. That was the flicker.
 
 use super::i18n::{self, Lang};
 use super::theme::{self, BOLD, RESET, TEAL};
@@ -25,8 +29,9 @@ const WIDTH: usize = 50;
 const FULL: char = '\u{2588}'; // █  done
 const EMPTY: char = '\u{2591}'; // ░ remaining — same teal, sparser glyph
 const MIN_REDRAW: Duration = Duration::from_millis(66); // ~15 Hz
-/// Move to the top of the block and clear everything below it.
-const ERASE_DOWN: &str = "\x1b[0J";
+/// Clear the rest of the line the cursor sits on — the bar line keeps its width, but the
+/// `remaining` readout beside it disappears on the closing frame.
+const CLEAR_EOL: &str = "\x1b[K";
 
 pub struct Progress {
     total: usize,
@@ -91,18 +96,32 @@ impl Progress {
         self.paint(&mut out, done, true);
     }
 
-    /// Print the block. When `rewind`, first walk back over the frame already on screen and wipe
-    /// it, so the new frame lands in exactly the same place.
+    /// Build the whole frame in memory and hand it to the terminal in one write.
+    ///
+    /// The opening frame (`rewind` false) prints the bar and the footer under it. Every frame after
+    /// that touches the bar line alone: up to it, rewrite it, back down to where the cursor was.
+    /// The footer is never erased, so the screen never holds a blank where it used to be.
     fn paint<W: Write>(&self, out: &mut W, done: usize, rewind: bool) {
-        if rewind {
+        let bar = format!(
+            "{}{}{}",
+            " ".repeat(theme::INDENT),
+            self.bar(done),
+            self.label(done)
+        );
+
+        let frame = if rewind {
             let up = self.footer.len() + 1;
-            let _ = write!(out, "\x1b[{up}A\r{ERASE_DOWN}");
-        }
-        let indent = " ".repeat(theme::INDENT);
-        let _ = writeln!(out, "{indent}{}{}", self.bar(done), self.label(done));
-        for line in &self.footer {
-            let _ = writeln!(out, "{line}");
-        }
+            format!("\x1b[{up}A\r{bar}{CLEAR_EOL}\x1b[{up}B\r")
+        } else {
+            let mut frame = format!("{bar}\n");
+            for line in &self.footer {
+                frame.push_str(line);
+                frame.push('\n');
+            }
+            frame
+        };
+
+        let _ = out.write_all(frame.as_bytes());
         let _ = out.flush();
     }
 
@@ -150,13 +169,18 @@ mod tests {
 
     /// A `Progress` that never touches stdout, for exercising [`Progress::bar`] alone.
     fn silent(total: usize) -> Progress {
+        silent_with_footer(total, Vec::new())
+    }
+
+    /// As [`silent`], with a footer under the bar — what [`Progress::paint`] has to leave alone.
+    fn silent_with_footer(total: usize, footer: Vec<String>) -> Progress {
         Progress {
             total,
             done: AtomicUsize::new(0),
             start: Instant::now(),
             gate: Mutex::new(Instant::now()),
             enabled: false,
-            footer: Vec::new(),
+            footer,
             lang: Lang::En,
         }
     }
@@ -177,6 +201,39 @@ mod tests {
             }
         }
         cells
+    }
+
+    /// The opening frame is the only one that draws the footer, and it draws it once.
+    #[test]
+    fn first_frame_draws_the_footer() {
+        let footer = vec![String::new(), "RULE".into(), "CALLOUT".into()];
+        let mut out = Vec::new();
+        silent_with_footer(10, footer).paint(&mut out, 0, false);
+        let frame = String::from_utf8(out).unwrap();
+
+        assert_eq!(frame.matches("RULE").count(), 1);
+        assert_eq!(frame.matches("CALLOUT").count(), 1);
+        assert_eq!(frame.lines().count(), 4);
+    }
+
+    /// A repaint rewrites the bar line and nothing else. A newline in this frame would walk the
+    /// footer down the screen a row per frame; reprinting the footer would blank it fifteen times a
+    /// second, which is what the flicker was.
+    #[test]
+    fn repaint_touches_the_bar_line_only() {
+        let footer = vec![String::new(), "RULE".into(), "CALLOUT".into()];
+        let mut out = Vec::new();
+        silent_with_footer(10, footer).paint(&mut out, 5, true);
+        let frame = String::from_utf8(out).unwrap();
+
+        assert!(!frame.contains('\n'), "{frame:?}");
+        assert!(
+            !frame.contains("RULE") && !frame.contains("CALLOUT"),
+            "{frame:?}"
+        );
+        // Four footer lines above the cursor plus the bar itself: up four, and back down four.
+        assert!(frame.starts_with("\x1b[4A\r"), "{frame:?}");
+        assert!(frame.ends_with("\x1b[4B\r"), "{frame:?}");
     }
 
     /// The frame under the bar only stays put if the bar never changes width — including at 100%,

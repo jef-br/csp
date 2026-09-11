@@ -1,11 +1,11 @@
 [package]
 name = "csp"
-version = "1.0.0"
+version = "1.2.2"
 edition = "2021"
 publish = false
 
 [[bin]]
-name = "csp"
+name = "pproni"
 path = "src/main.rs"
 
 [dependencies]
