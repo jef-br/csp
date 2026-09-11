@@ -31,22 +31,26 @@ const TAGLINE: &[&str] = &[
 ];
 
 /// Gap between the widest logo row and the text column beside it.
-const GUTTER: usize = 4;
+const HORIZONTAL_CHARSPACE_BETWEEN_LOGO_AND_TAGLINE: usize = 4;
 
 /// Logo row the name sits on, so it lines up with the body of the art rather than its top edge.
 /// The tagline follows on the rows below.
-const TEXT_TOP: usize = 2;
+const LINEHEIGHT_OF_TAGLINE: usize = 2;
 
 /// Print the banner: the logo block, with the name and tagline in the column beside it.
 pub fn print() {
+    // meassure logo width
     let width = LOGO.iter().map(|l| l.chars().count()).max().unwrap_or(0);
 
+    //meassure text width
     let mut text = vec![format!("{BOLD}{GREY}{NAME}{RESET}")];
     text.extend(TAGLINE.iter().map(|l| format!("{GREY}{l}{RESET}")));
 
+    
     for (i, row) in LOGO.iter().enumerate() {
-        let pad = " ".repeat(width - row.chars().count() + GUTTER);
-        match i.checked_sub(TEXT_TOP).and_then(|n| text.get(n)) {
+        // 
+        let pad = " ".repeat(width - row.chars().count() + HORIZONTAL_CHARSPACE_BETWEEN_LOGO_AND_TAGLINE);
+        match i.checked_sub(LINEHEIGHT_OF_TAGLINE).and_then(|n| text.get(n)) {
             Some(line) => println!("{ORANGE}{row}{RESET}{pad}{line}"),
             None => println!("{ORANGE}{row}{RESET}"),
         }

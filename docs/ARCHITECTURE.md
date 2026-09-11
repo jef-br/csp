@@ -179,7 +179,7 @@ embedded model is also **encrypted at rest** (see below), so it no longer carves
 with `binwalk`/`strings`. This is obfuscation, not secrecy: the key ships in the binary, so it
 raises the effort bar without pretending a determined analyst can't recover the weights.
 
-**Met.** `cargo build --release` produces one `csp.exe` (~195MB) and nothing else. Two things are
+**Met.** `cargo build --release` produces one exe file (~195MB) and nothing else. Two things are
 compiled in:
 
 - **The model.** `shot_classifier::birefnet` embeds `birefnet_lite_512.onnx` and loads it through

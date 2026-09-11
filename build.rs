@@ -1,4 +1,4 @@
-//! Build-time steps that shape `csp.exe`.
+//! Build-time steps that shape the final exe
 //!
 //! 1. Stamps the Windows app icon onto the binary (Explorer, taskbar and console read it straight
 //!    from the exe). `Pepperoni.ico` is committed at the repo root: unlike the model and the

@@ -24,5 +24,5 @@ pub fn run_default() {
 /// `<input_dir> <output_dir>` argument form instead.
 #[cfg(not(windows))]
 pub fn run_default() {
-    eprintln!("usage: csp <input_dir> <output_dir>");
+    eprintln!("usage: {} <input_dir> <output_dir>", env!("CARGO_BIN_NAME"));
 }
