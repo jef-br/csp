@@ -12,8 +12,12 @@ One crate, one `src/` tree.
 A hard requirement, met — not optional, and never solved by putting a file beside the exe.
 `cargo build --release` produces `csp.exe` and nothing else. The `.onnx` model
 (`shot_classifier::birefnet`) and `onnxruntime.dll` (`core::runtime`) are gitignored, live at the
-repo root, and are `include_bytes!`'d into the binary — a missing one breaks the *build*, not the
-run. At startup the runtime is unpacked to a per-user cache file (`ort`'s loader needs a real file
+repo root, and are compiled into the binary — a missing one breaks the *build*, not the run. The
+model is embedded **encrypted**: `build.rs` encrypts it under a per-build key (shared cipher in
+`shot_classifier::cipher`) and `birefnet::load` decrypts it in memory before `commit_from_memory`,
+so the weights don't carve out of the exe with `binwalk`/`strings`. Obfuscation, not secrecy — the
+key ships in the binary. The runtime is unpacked to a per-user cache file under a `pproni-*`
+name (not `onnxruntime.dll`). At startup the runtime is unpacked to a per-user cache file (`ort`'s loader needs a real file
 to `LoadLibrary`) and the classifier session is built; if that fails the exe aborts before touching
 any file (`core::preflight`) rather than silently taking the R3 fallback for the whole batch.
 Real inference is always built in — no feature flag. `load-dynamic` stays only because no static

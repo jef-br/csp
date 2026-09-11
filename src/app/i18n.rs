@@ -2,6 +2,8 @@
 //!
 //! Every line here is printed inside the layout `app::theme` draws, so keep each one under
 //! `theme::WIDTH` characters — a longer line wraps and pushes the rule below it out of place.
+//! `interrupt_hint` and `close_line` are tighter still: they share their line with the version
+//! slug on the right, so they have about `WIDTH - 18` to work with.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
@@ -27,19 +29,37 @@ impl Lang {
     }
 }
 
-/// First standing line of the banner. The folder path is printed separately, below it.
-pub fn drop_prompt(lang: Lang) -> &'static str {
+/// The two status lines of the start screen. The input folder is printed separately, below them.
+pub fn drop_prompt(lang: Lang) -> [&'static str; 2] {
     match lang {
-        Lang::En => "Put your images into the folder below, then double-click csp.exe again.",
-        Lang::Es => "Coloca tus imágenes en la carpeta de abajo y vuelve a hacer doble clic en csp.exe.",
-        Lang::Fr => "Placez vos images dans le dossier ci-dessous, puis double-cliquez à nouveau sur csp.exe.",
-        Lang::Nl => "Zet je afbeeldingen in de map hieronder en dubbelklik opnieuw op csp.exe.",
-        Lang::It => "Inserisci le immagini nella cartella qui sotto, poi fai di nuovo doppio clic su csp.exe.",
-        Lang::De => "Lege deine Bilder in den Ordner unten und doppelklicke csp.exe erneut.",
+        Lang::En => [
+            "  Put your images into the folder below.",
+            "  Then double-click PProni again to start processing.",
+        ],
+        Lang::Es => [
+            "  Coloca tus imágenes en la carpeta de abajo.",
+            "  Luego vuelve a hacer doble clic en PProni para empezar.",
+        ],
+        Lang::Fr => [
+            "  Placez vos images dans le dossier ci-dessous.",
+            "  Double-cliquez ensuite sur PProni pour lancer le traitement.",
+        ],
+        Lang::Nl => [
+            "  Zet je afbeeldingen in de map hieronder.",
+            "  Dubbelklik daarna op PProni om de verwerking te starten.",
+        ],
+        Lang::It => [
+            "  Inserisci le immagini nella cartella qui sotto.",
+            "  Poi fai di nuovo doppio clic su PProni per iniziare.",
+        ],
+        Lang::De => [
+            "  Lege deine Bilder in den Ordner unten.",
+            "  Doppelklicke danach erneut auf PProni, um zu starten.",
+        ],
     }
 }
 
-/// Second standing line of the banner.
+/// Callout of the start and finish screens.
 pub fn close_line(lang: Lang) -> &'static str {
     match lang {
         Lang::En => "Press any key to close this window.",
@@ -51,51 +71,117 @@ pub fn close_line(lang: Lang) -> &'static str {
     }
 }
 
-/// Callout shown while the input folder is waiting to be filled.
-pub fn ready_hint(lang: Lang) -> &'static str {
-    match lang {
-        Lang::En => "When your images are ready for processing, double-click csp.exe again to start processing.",
-        Lang::Es => "Cuando tus imágenes estén listas, vuelve a hacer doble clic en csp.exe para procesarlas.",
-        Lang::Fr => "Lorsque vos images sont prêtes, double-cliquez à nouveau sur csp.exe pour lancer le traitement.",
-        Lang::Nl => "Als je afbeeldingen klaarstaan, dubbelklik opnieuw op csp.exe om te verwerken.",
-        Lang::It => "Quando le tue immagini sono pronte, fai di nuovo doppio clic su csp.exe per elaborarle.",
-        Lang::De => "Wenn deine Bilder bereit sind, doppelklicke csp.exe erneut, um sie zu verarbeiten.",
-    }
-}
-
 /// Callout shown under the progress bar while the batch runs.
 pub fn interrupt_hint(lang: Lang) -> &'static str {
     match lang {
-        Lang::En => "Push CTRL+C or close this window to interrupt the processing",
-        Lang::Es => "Pulsa CTRL+C o cierra esta ventana para interrumpir el procesamiento",
-        Lang::Fr => "Appuyez sur CTRL+C ou fermez cette fenêtre pour interrompre le traitement",
-        Lang::Nl => "Druk op CTRL+C of sluit dit venster om het verwerken te onderbreken",
-        Lang::It => "Premi CTRL+C o chiudi questa finestra per interrompere l'elaborazione",
-        Lang::De => "Drücke STRG+C oder schließe dieses Fenster, um die Verarbeitung abzubrechen",
+        Lang::En => "Close this window to stop processing",
+        Lang::Es => "Cierra esta ventana para detener el procesamiento",
+        Lang::Fr => "Fermez cette fenêtre pour arrêter le traitement",
+        Lang::Nl => "Sluit dit venster om het verwerken te stoppen",
+        Lang::It => "Chiudi questa finestra per interrompere l'elaborazione",
+        Lang::De => "Schließe dieses Fenster, um die Verarbeitung zu stoppen",
     }
 }
 
-/// Printed just before processing begins.
-pub fn processing(lang: Lang) -> &'static str {
+/// Label in front of the backup folder on the processing screen. Padded to match [`output_label`]
+/// so the two paths line up.
+pub fn backup_label(lang: Lang) -> &'static str {
     match lang {
-        Lang::En => "Processing your images...",
-        Lang::Es => "Procesando tus imágenes...",
-        Lang::Fr => "Traitement de vos images...",
-        Lang::Nl => "Je afbeeldingen worden verwerkt...",
-        Lang::It => "Elaborazione delle tue immagini...",
-        Lang::De => "Deine Bilder werden verarbeitet...",
+        Lang::En => "  Backup: ",
+        Lang::Es => "  Copia:  ",
+        Lang::Fr => "  Copie:  ",
+        Lang::Nl => "  Backup: ",
+        Lang::It => "  Backup: ",
+        Lang::De => "  Backup: ",
     }
 }
 
-/// Completion summary. `seconds` is already rounded to hundredths.
-pub fn finished(lang: Lang, seconds: f64, ok: usize, failed: usize) -> String {
+/// Label in front of the output folder on the processing screen. Padded to match
+/// [`backup_label`].
+pub fn output_label(lang: Lang) -> &'static str {
+    match lang {
+        Lang::En => "  Output: ",
+        Lang::Es => "  Output: ",
+        Lang::Fr => "  Output: ",
+        Lang::Nl => "  Output:",
+        Lang::It => "  Output: ",
+        Lang::De => "  Output:",
+    }
+}
+
+/// Trailing word of the progress bar's `08m25s remaining` readout.
+pub fn remaining(lang: Lang) -> &'static str {
+    match lang {
+        Lang::En => "remaining",
+        Lang::Es => "restante",
+        Lang::Fr => "restant",
+        Lang::Nl => "resterend",
+        Lang::It => "rimanente",
+        Lang::De => "verbleibend",
+    }
+}
+
+/// The two status lines of the finish screen. `seconds` is already rounded to hundredths.
+pub fn finished(lang: Lang, seconds: f64, ok: usize, failed: usize) -> [String; 2] {
     let s = format!("{seconds:.2}");
     match lang {
-        Lang::En => format!("Batch finished in {s}s. {ok} processed, {failed} skipped. Your results are in the folder below."),
-        Lang::Es => format!("Lote terminado en {s}s. {ok} procesadas, {failed} omitidas. Tus resultados están en la carpeta de abajo."),
-        Lang::Fr => format!("Traitement terminé en {s}s. {ok} traitées, {failed} ignorées. Vos résultats sont dans le dossier ci-dessous."),
-        Lang::Nl => format!("Batch klaar in {s}s. {ok} verwerkt, {failed} overgeslagen. Je resultaten staan in de map hieronder."),
-        Lang::It => format!("Lotto completato in {s}s. {ok} elaborate, {failed} saltate. I risultati sono nella cartella qui sotto."),
-        Lang::De => format!("Stapel in {s}s fertig. {ok} verarbeitet, {failed} übersprungen. Deine Ergebnisse sind im Ordner unten."),
+        Lang::En => [
+            format!("  Batch finished in {s}s."),
+            format!("  {ok} processed, {failed} skipped ... Your results are in the folder below:"),
+        ],
+        Lang::Es => [
+            format!("  Lote terminado en {s}s."),
+            format!("  {ok} procesadas, {failed} omitidas ... Tus resultados están en la carpeta de abajo:"),
+        ],
+        Lang::Fr => [
+            format!("  Traitement terminé en {s}s."),
+            format!("  {ok} traitées, {failed} ignorées ... Vos résultats sont dans le dossier ci-dessous:"),
+        ],
+        Lang::Nl => [
+            format!("  Batch klaar in {s}s."),
+            format!("  {ok} verwerkt, {failed} overgeslagen ... Je resultaten staan in de map hieronder:"),
+        ],
+        Lang::It => [
+            format!("  Lotto completato in {s}s."),
+            format!("  {ok} elaborate, {failed} saltate ... I risultati sono nella cartella qui sotto:"),
+        ],
+        Lang::De => [
+            format!("  Stapel in {s}s fertig."),
+            format!("  {ok} verarbeitet, {failed} übersprungen ... Deine Ergebnisse sind im Ordner unten:"),
+        ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::theme;
+
+    const LANGS: [Lang; 6] = [Lang::En, Lang::Es, Lang::Fr, Lang::Nl, Lang::It, Lang::De];
+
+    /// Status lines are printed flush left and must not wrap, or they push the rule below them out of place.
+    #[test]
+    fn status_lines_fit_the_frame() {
+        for lang in LANGS {
+            for line in drop_prompt(lang) {
+                assert!(line.chars().count() <= theme::WIDTH, "{line:?}");
+            }
+            // 999 files and a 9999.99s run: the widest the counters realistically get.
+            for line in finished(lang, 9999.99, 999, 999) {
+                assert!(line.chars().count() <= theme::WIDTH, "{line:?}");
+            }
+        }
+    }
+
+    /// Callout lines share their row with the version slug on the right, so they have less room
+    /// than a status line. A collision would push the slug past the rule and wrap it.
+    #[test]
+    fn callouts_leave_room_for_the_slug() {
+        let budget = theme::WIDTH - 3 - theme::slug().chars().count() - 1;
+        for lang in LANGS {
+            for text in [close_line(lang), interrupt_hint(lang)] {
+                assert!(text.chars().count() <= budget, "{text:?} exceeds {budget}");
+            }
+        }
     }
 }
