@@ -42,8 +42,7 @@ use ort::value::Tensor;
 /// This is obfuscation, not secrecy: [`MODEL_KEY`]/[`MODEL_NONCE`] ship in the binary too (also
 /// emitted by `build.rs`, also out of git). [`load`] decrypts into a heap buffer that lives only
 /// until ONNX Runtime copies the graph into its session; the plaintext never touches disk.
-static ENC_MODEL: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/birefnet_lite_512.onnx.enc"));
+static ENC_MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/model.onnx.enc"));
 
 // MODEL_KEY / MODEL_NONCE, generated fresh for this build by build.rs (never committed).
 include!(concat!(env!("OUT_DIR"), "/model_key.rs"));
@@ -121,14 +120,15 @@ impl BiRefNetModel {
         config: BiRefNetConfig,
         commit: impl FnOnce(ort::session::builder::SessionBuilder) -> ort::Result<Session>,
     ) -> ort::Result<Self> {
-        // BiRefNet's activations are heavy (a swin backbone + deformable
-        // decoder). Keep peak memory bounded: no arena growth, single
-        // intra-op thread, and cap graph optimization at Level1 — the
-        // default (Level3) transient-buffers the 512/1024 graph hard
-        // enough to OOM a memory-constrained host during session init,
-        // for no measurable speedup on a one-shot forward pass.
+        // One intra-op thread on purpose: `app::batch` fans images across cores
+        // with rayon, so the parallelism lives one level up. Peak memory tracks
+        // that fan-out — roughly 400MB of activations per concurrent worker —
+        // and not the optimization level: measured session-init peak is 393MB
+        // at Level1, Level2 and Level3 alike. An earlier comment here blamed
+        // Level3 for an OOM during session init; that was a 4GB CI container,
+        // not a property of the graph.
         let builder = Session::builder()?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1)?
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
             .with_memory_pattern(false)?
             .with_intra_threads(1)?;
         let session = commit(builder)?;
