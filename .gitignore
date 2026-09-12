@@ -17,3 +17,7 @@ onnxruntime_providers_shared.dll
 # Local run output
 /shot-classifier-output
 /test data/OUTPUT
+
+# Python bytecode from tools/
+__pycache__/
+*.pyc
