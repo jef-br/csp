@@ -5,8 +5,15 @@ import numpy as np
 from PIL import Image
 import onnxruntime as ort
 
-MODEL_PATH = "birefnet_lite.onnx"
-RES = 1024
+MODEL_PATH = os.environ.get("BIREFNET_ONNX", "birefnet_lite_512.onnx")
+# Read the side from the model rather than hardcoding it: the repo now holds
+# exports at several resolutions and they must not be mixed up.
+def _side(path):
+    import onnx
+    d = onnx.load(path, load_external_data=False).graph.input[0].type.tensor_type.shape.dim
+    return d[2].dim_value
+
+RES = _side(MODEL_PATH)
 MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
