@@ -4,7 +4,7 @@
 //! re-quantized model, a different side.
 //!
 //!   ORT_DYLIB_PATH   ONNX Runtime shared library (default: ./onnxruntime.dll)
-//!   BIREFNET_ONNX    BiRefNet model to inspect   (default: ./birefnet_lite_512.onnx)
+//!   BIREFNET_ONNX    BiRefNet model to inspect   (default: ./models/birefnet_lite_512.onnx)
 
 use ort::session::Session;
 
@@ -22,7 +22,7 @@ fn main() -> ort::Result<()> {
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or(ort_lib);
     let model_path =
-        std::env::var("BIREFNET_ONNX").unwrap_or_else(|_| "birefnet_lite_512.onnx".into());
+        std::env::var("BIREFNET_ONNX").unwrap_or_else(|_| "models/birefnet_lite_512.onnx".into());
 
     ort::init_from(ort_lib).commit()?;
     let session = Session::builder()?.commit_from_file(model_path)?;

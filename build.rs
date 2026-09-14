@@ -3,8 +3,8 @@
 //! 1. Stamps the Windows app icon onto the binary (Explorer, taskbar and console read it straight
 //!    from the exe). `Pepperoni.ico` is committed at the repo root: unlike the model and the
 //!    runtime it is small, so it lives in the repo rather than being a build-time prerequisite.
-//! 2. Encrypts the embedded BiRefNet model. The plaintext named by [`MODEL_FILE`] at the repo
-//!    root (gitignored) is read here, encrypted under a key generated fresh for this build, and
+//! 2. Encrypts the embedded BiRefNet model. The plaintext named by [`MODEL_FILE`] inside
+//!    [`MODEL_DIR`] (gitignored) is read here, encrypted under a key generated fresh for this build, and
 //!    written to `$OUT_DIR/model.onnx.enc`; the key+nonce go to `$OUT_DIR/model_key.rs`. The
 //!    encrypted name is fixed so swapping which model ships is one edit here, not two.
 //!    So the plaintext model is never `include_bytes!`'d into the image and never lands in git — see
@@ -18,10 +18,17 @@ mod cipher;
 
 use std::path::Path;
 
-/// Which model gets baked into this build. The repo root holds more than one
-/// export (the 512 fp32 original, the 384 int8 quantization); this constant is
-/// the only thing that decides which one ships.
-const MODEL_FILE: &str = "birefnet_lite_384_int8.onnx";
+/// Where the plaintext exports live. One gitignored folder holds every variant
+/// (the 512 fp32 original, the int8 quantizations, anything else being tried);
+/// nothing else in the tree looks for a `.onnx` anywhere but here.
+const MODEL_DIR: &str = "models";
+
+/// Which model in [`MODEL_DIR`] gets baked into this build. This constant is the
+/// only thing that decides which one ships. To switch, move the `//` — exactly
+/// one of these lines must be live, and leaving both live is a build error
+/// (E0428, `MODEL_FILE` defined twice) rather than a silent wrong model.
+const MODEL_FILE: &str = "birefnet_lite_384_int8.onnx"; // JB: Homemade optimized-for-speed model. Untested performance.
+// const MODEL_FILE: &str = "birefnet_lite_512.onnx"; // JB: Proven to work. Slower & bigger.
 
 fn main() {
     #[cfg(windows)]
@@ -42,8 +49,8 @@ fn encrypt_model() {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
 
-    let model = Path::new(&manifest).join(MODEL_FILE);
-    println!("cargo:rerun-if-changed={MODEL_FILE}");
+    let model = Path::new(&manifest).join(MODEL_DIR).join(MODEL_FILE);
+    println!("cargo:rerun-if-changed={MODEL_DIR}/{MODEL_FILE}");
     println!("cargo:rerun-if-changed=src/core/shot_classifier/cipher.rs");
 
     let mut bytes = std::fs::read(&model)

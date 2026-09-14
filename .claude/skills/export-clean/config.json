@@ -1,0 +1,23 @@
+{
+  "clean_repo": null,
+  "include_python_tools": null,
+  "include": [
+    "src/**/*.rs",
+    "build.rs",
+    "examples/*.rs",
+    "tests/*.rs",
+    "tests/fixtures/*",
+    "Cargo.toml",
+    "Cargo.lock",
+    ".cargo/config.toml",
+    ".gitignore",
+    ".gitattributes",
+    "Pepperoni.ico"
+  ],
+  "python_tools": ["tools/*.py"],
+  "exclude": ["**/*.md"],
+  "verbatim": ["Cargo.lock", "Pepperoni.ico", "tests/fixtures/*"],
+  "build_inputs": ["models/*.onnx", "onnxruntime.dll"],
+  "verify": [["cargo", "fmt"], ["cargo", "test"]],
+  "forbidden_terms": ["veepee", "vptech"]
+}
