@@ -1,7 +1,7 @@
 """
 Quantize a BiRefNet export to int8, the way that actually goes faster.
 
-    python "tools/3. quantize_int8.py" birefnet_lite_384.onnx
+    python "tools/3. quantize_int8.py" models/birefnet_lite_384.onnx
 
 Writes `<stem>_int8.onnx` beside the input. Run from the repo root; the
 calibration set is read from `JB core img batch/`.
@@ -87,7 +87,7 @@ class GarmentCalibration(CalibrationDataReader):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit('usage: quantize_int8.py MODEL.onnx   (run from the repo root)')
+        sys.exit('usage: quantize_int8.py models/MODEL.onnx   (run from the repo root)')
     src = sys.argv[1]
     if not os.path.isfile(src):
         sys.exit(f"not found: {src}")

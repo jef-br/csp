@@ -1,7 +1,7 @@
 """
 A/B two BiRefNet exports: speed under CSP's real concurrency, and mask agreement.
 
-    python "tools/4. compare_models.py" birefnet_lite_512.onnx birefnet_lite_384_int8.onnx
+    python "tools/4. compare_models.py" models/birefnet_lite_512.onnx models/birefnet_lite_384_int8.onnx
 
 The first model given is the reference; IoU is measured against its masks. Run
 from the repo root - test images come from `JB core img batch/`.

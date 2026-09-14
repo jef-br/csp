@@ -5,8 +5,8 @@ import numpy as np
 from PIL import Image
 import onnxruntime as ort
 
-MODEL_PATH = os.environ.get("BIREFNET_ONNX", "birefnet_lite_512.onnx")
-# Read the side from the model rather than hardcoding it: the repo now holds
+MODEL_PATH = os.environ.get("BIREFNET_ONNX", "models/birefnet_lite_512.onnx")
+# Read the side from the model rather than hardcoding it: models/ holds
 # exports at several resolutions and they must not be mixed up.
 def _side(path):
     import onnx

@@ -3,8 +3,8 @@ Export ZhengPeng7/BiRefNet_lite to ONNX at a fixed square side.
 
     python "tools/2. export_onnx.py" [SIDE]        # default 512
 
-Writes `birefnet_lite_{SIDE}.onnx` to the current directory. Run it from the
-repo root so the file lands where `build.rs` looks.
+Writes `models/birefnet_lite_{SIDE}.onnx`. Run it from the repo root so the
+file lands in the one folder `build.rs` looks in.
 
 Side notes, measured on an i7-12700H:
   256   too coarse - returns an empty mask on pale, soft-edged garments.
@@ -22,6 +22,7 @@ The export traces eval mode, so BiRefNet's training-only heads
 
 Requires: torch, transformers, onnx
 """
+import os
 import sys
 
 import onnx
@@ -29,11 +30,14 @@ import torch
 from transformers import AutoModelForImageSegmentation
 
 MODEL_ID = "ZhengPeng7/BiRefNet_lite"
+# One folder holds every export; build.rs reads MODEL_FILE out of it.
+MODEL_DIR = "models"
 
 
 def main():
     side = int(sys.argv[1]) if len(sys.argv) > 1 else 512
-    out = f"birefnet_lite_{side}.onnx"
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    out = os.path.join(MODEL_DIR, f"birefnet_lite_{side}.onnx")
 
     print(f"loading {MODEL_ID} ...", flush=True)
     model = AutoModelForImageSegmentation.from_pretrained(

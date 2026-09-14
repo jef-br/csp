@@ -11,8 +11,9 @@ One crate, one `src/` tree.
 ## Ships as one hardened exe, no install
 A hard requirement, met — not optional, and never solved by putting a file beside the exe.
 `cargo build --release` produces the single main exe and nothing else. The `.onnx` model
-(`shot_classifier::birefnet`) and `onnxruntime.dll` (`core::runtime`) are gitignored, live at the
-repo root, and are compiled into the binary — a missing one breaks the *build*, not the run. The
+(`shot_classifier::birefnet`, in `models/` — the one place any `.onnx` lives; `build.rs`'s
+`MODEL_FILE` picks which variant ships) and `onnxruntime.dll` (`core::runtime`, at the repo root)
+are gitignored and compiled into the binary — a missing one breaks the *build*, not the run. The
 model is embedded **encrypted**: `build.rs` encrypts it under a per-build key (shared cipher in
 `shot_classifier::cipher`) and `birefnet::load` decrypts it in memory before `commit_from_memory`,
 so the weights don't carve out of the exe with `binwalk`/`strings`. Obfuscation, not secrecy — the

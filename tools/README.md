@@ -1,7 +1,8 @@
 # tools
 
 The model pipeline, in order. Run every script **from the repo root** - they
-resolve `JB core img batch/` and the `.onnx` files relative to it.
+resolve `JB core img batch/` and `models/` relative to it. Every `.onnx` lives
+in `models/`; nothing reads one from anywhere else.
 
 | Script | Does |
 |---|---|
@@ -14,12 +15,13 @@ resolve `JB core img batch/` and the `.onnx` files relative to it.
 
 ```
 python "tools/2. export_onnx.py" 384
-python "tools/3. quantize_int8.py" birefnet_lite_384.onnx
-python "tools/4. compare_models.py" birefnet_lite_512.onnx birefnet_lite_384_int8.onnx
+python "tools/3. quantize_int8.py" models/birefnet_lite_384.onnx
+python "tools/4. compare_models.py" models/birefnet_lite_512.onnx models/birefnet_lite_384_int8.onnx
 ```
 
-Then point `MODEL_FILE` in `build.rs` at the result. The `.onnx` files are
-gitignored - they are build inputs, not source.
+Then point `MODEL_FILE` in `build.rs` at the result - a bare filename, resolved
+inside `models/`. The `.onnx` files are gitignored - they are build inputs, not
+source.
 
 ## Three things that are easy to get wrong
 
