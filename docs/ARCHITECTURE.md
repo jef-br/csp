@@ -182,9 +182,10 @@ raises the effort bar without pretending a determined analyst can't recover the 
 **Met.** `cargo build --release` produces one exe file (~195MB) and nothing else. Two things are
 compiled in:
 
-- **The model.** `shot_classifier::birefnet` embeds `birefnet_lite_512.onnx` and loads it through
-  `Session::commit_from_memory`. It is stored **encrypted**: `build.rs` reads the plaintext at the
-  repo root, encrypts it under a per-build key (a ChaCha20 keystream in `shot_classifier::cipher`,
+- **The model.** `shot_classifier::birefnet` embeds one BiRefNet export and loads it through
+  `Session::commit_from_memory`. It is stored **encrypted**: `build.rs` reads the plaintext out of
+  `models/` — `MODEL_DIR` plus `MODEL_FILE` there are the only things that pick which export ships —
+  encrypts it under a per-build key (a ChaCha20 keystream in `shot_classifier::cipher`,
   shared with the build script by path), and `include_bytes!`'s the encrypted blob from `OUT_DIR`;
   `birefnet::load` decrypts into a heap buffer only for as long as ORT needs to copy the graph in.
   The plaintext model is never a static string in the image and never touches disk.
@@ -195,8 +196,10 @@ compiled in:
   directory, repeat runs reuse the file already there, and the write is atomic (temp name then
   rename) so concurrent CSP processes don't corrupt it.
 
-Both source files are gitignored and expected at the repo root — a missing one is a *build* failure
-naming the file, not a runtime surprise. The only files CSP still touches beside the exe are
+Both source files are gitignored — the model in `models/`, `onnxruntime.dll` at the repo root — and
+a missing one is a *build* failure naming the file, not a runtime surprise. `models/` is the single
+place any `.onnx` lives; it holds every variant being tried, and only `MODEL_FILE` decides which one
+is baked in. The only files CSP still touches beside the exe are
 optional markers (`CSP_DEBUG_TAGS`) and the `ORT_DYLIB_PATH` override the `examples/` dev harness
 uses to point at a hand-placed runtime.
 

@@ -34,8 +34,8 @@ use ort::value::Tensor;
 /// The BiRefNet weights, encrypted at rest and compiled into the executable.
 ///
 /// CSP ships as one file, so the model is part of the binary rather than a `.onnx` beside it. It is
-/// stored encrypted: `build.rs` reads the gitignored plaintext `birefnet_lite_512.onnx` at the repo
-/// root, encrypts it under a per-build key, and emits the blob to `OUT_DIR` — so the plaintext model
+/// stored encrypted: `build.rs` reads the gitignored plaintext named by its `MODEL_FILE` out of
+/// `models/`, encrypts it under a per-build key, and emits the blob to `OUT_DIR` — so the plaintext model
 /// is never a static string in the image and does not carve out with `binwalk`/`strings`. A missing
 /// plaintext is a *build* failure naming the file, which is the right time to find out.
 ///
