@@ -105,8 +105,13 @@ struct ShotColors {
     fgc: Option<String>,
 }
 
-/// BGC and FGC, derived from the original image partitioned by the mask
+/// BGC and FGC, derived from the working image partitioned by the mask
 /// (bg = inverse mask, fg = mask).
+///
+/// Working resolution, not the original: `image` and `mask` have to share one
+/// coordinate space for the loop below to index both off the same `x`/`y`, and
+/// the `min` against the mask's dimensions would quietly clip a full-res image
+/// to its top-left corner rather than fail.
 fn shot_colors(image: &RgbImage, mask: &Mask) -> ShotColors {
     let (mut fg_hist, mut bg_hist) = (Hist::new(), Hist::new());
     let w = image.width().min(mask.width);
