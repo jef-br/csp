@@ -1,10 +1,9 @@
 {
-  "clean_repo": null,
-  "include_python_tools": null,
+  "clean_repo": "C:/Users/JefB/Documents/JBGITROOT/PProni",
+  "include_python_tools": false,
   "include": [
     "src/**/*.rs",
     "build.rs",
-    "examples/*.rs",
     "tests/*.rs",
     "tests/fixtures/*",
     "Cargo.toml",

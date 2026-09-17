@@ -69,8 +69,8 @@ pub const MAX_SIZE: u32 = 2000;
 /// Margin R1 leaves around the subject, as a fraction of the square's side.
 ///
 /// The square is `max(bbox_w, bbox_h) * (1 + R1_MARGIN)`, so the margin is shared between the two
-/// sides of the subject's longest axis — roughly 2.1% of the side on each.
-pub const R1_MARGIN: f32 = 0.042;
+/// sides of the subject's longest axis — roughly 4.2% of the side on each.
+pub const R1_MARGIN: f32 = (2.0*0.042);
 
 /// R1 safety inset, part one: how far the *working-resolution* mask boundary can be wrong, in
 /// working pixels. Scaled up to full resolution before use, because that is where the error lands.
