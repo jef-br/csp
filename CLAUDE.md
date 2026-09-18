@@ -42,3 +42,7 @@ to patch again. `docs/ARCHITECTURE.md` §6 says what each container covers.
 * `docs/ARCHITECTURE.md` — module map, pipeline stages, routing, known gaps.
 * `docs/csp-spec.md` — the design spec. Its §5 table is six *behaviours*, not six routes:
   there are three routes, and §5's rows live inside R1 and R2.
+
+## Commit attribution
+Never add `Co-Authored-By:` trailers or "Generated with [Claude Code]" lines to commits or pull
+requests. Commits carry the repo owner as the sole author — no assistant attribution, ever.
