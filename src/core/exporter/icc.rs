@@ -5,7 +5,7 @@
 pub fn srgb_profile() -> Vec<u8> {
     // Tag payloads first, so we can compute offsets.
     let desc = text_desc_tag("sRGB");
-    let cprt = text_desc_tag("Public Domain");
+    let cprt = text_tag("Public Domain");
     let wtpt = xyz_tag(0.9642, 1.0, 0.8249);
     let r_xyz = xyz_tag(0.43607, 0.22249, 0.01392);
     let g_xyz = xyz_tag(0.38515, 0.71687, 0.09708);
@@ -28,6 +28,7 @@ pub fn srgb_profile() -> Vec<u8> {
     // Ordered list of (signature, payload) including the shared TRC (added once, referenced thrice).
     let mut all: Vec<(&[u8; 4], &Vec<u8>)> = entries.to_vec();
     all.push((cprt_sig, cprt_payload));
+    all.sort_by_key(|(sig, _)| **sig); // ICC requires the tag table in ascending signature order
 
     let tag_count = all.len();
     let header_len = 128usize;
@@ -68,10 +69,15 @@ pub fn srgb_profile() -> Vec<u8> {
 fn header(total: usize) -> [u8; 128] {
     let mut h = [0u8; 128];
     h[0..4].copy_from_slice(&(total as u32).to_be_bytes()); // profile size
+    h[8..12].copy_from_slice(&[0x02, 0x10, 0x00, 0x00]); // profile version 2.1.0
     h[12..16].copy_from_slice(b"mntr"); // device class: display
     h[16..20].copy_from_slice(b"RGB "); // colour space
     h[20..24].copy_from_slice(b"XYZ "); // PCS
     h[36..40].copy_from_slice(b"acsp"); // signature
+    h[40..44].copy_from_slice(b"MSFT"); // primary platform
+    // Creation date/time (dateTimeNumber): a fixed valid stamp beats the all-zero one some
+    // readers treat as a malformed profile.
+    h[24..36].copy_from_slice(&[0x07, 0xE6, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0]); // 2022-01-01 00:00:00
     // PCS illuminant = D50.
     h[68..72].copy_from_slice(&s15fixed16(0.9642).to_be_bytes());
     h[72..76].copy_from_slice(&s15fixed16(1.0).to_be_bytes());
@@ -119,11 +125,22 @@ fn text_desc_tag(s: &str) -> Vec<u8> {
     v.extend_from_slice(&count.to_be_bytes());
     v.extend_from_slice(ascii);
     v.push(0);
-    // Unicode + scriptcode counts (unused).
-    v.extend_from_slice(&[0u8; 4]); // unicode language code + count
+    // Unicode + scriptcode blocks (unused, but their fields are mandatory and fixed-width).
+    v.extend_from_slice(&[0u8; 4]); // unicode language code
+    v.extend_from_slice(&[0u8; 4]); // unicode count
     v.extend_from_slice(&[0u8; 3]); // scriptcode code(2) + count(1)
     // Macintosh scriptcode description (67 bytes, zeroed).
     v.extend_from_slice(&[0u8; 67]);
+    v
+}
+
+// 'text' tag (ICC v2 textType) - the required type for `cprt`.
+fn text_tag(s: &str) -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(b"text");
+    v.extend_from_slice(&[0u8; 4]);
+    v.extend_from_slice(s.as_bytes());
+    v.push(0);
     v
 }
 
@@ -134,5 +151,45 @@ fn s15fixed16(v: f64) -> i32 {
 fn pad4(v: &mut Vec<u8>) {
     while v.len() % 4 != 0 {
         v.push(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Photoshop rejects a profile that trips any of these; each one was a real bug here.
+    #[test]
+    fn profile_is_structurally_valid() {
+        let p = super::srgb_profile();
+        let be32 = |o: usize| u32::from_be_bytes(p[o..o + 4].try_into().unwrap()) as usize;
+
+        assert_eq!(be32(0), p.len(), "declared size must match");
+        assert_eq!(&p[8..12], &[0x02, 0x10, 0x00, 0x00], "version must not be zero");
+        assert_eq!(&p[36..40], b"acsp");
+
+        let count = be32(128);
+        let mut prev = [0u8; 4];
+        for i in 0..count {
+            let e = 132 + i * 12;
+            let sig: [u8; 4] = p[e..e + 4].try_into().unwrap();
+            let (off, len) = (be32(e + 4), be32(e + 8));
+            assert!(sig > prev, "tag table must ascend by signature");
+            prev = sig;
+            assert!(off + len <= p.len(), "tag must lie inside the profile");
+
+            match &sig {
+                // cprt is textType, not textDescriptionType.
+                b"cprt" => assert_eq!(&p[off..off + 4], b"text"),
+                // textDescription is 90 bytes of fixed fields plus the ASCII string.
+                b"desc" => assert_eq!(len, 90 + be32(off + 8)),
+                _ => {}
+            }
+        }
+        for tag in [b"desc", b"cprt", b"wtpt", b"rXYZ", b"gXYZ", b"bXYZ", b"rTRC", b"gTRC", b"bTRC"] {
+            assert!(
+                (0..count).any(|i| &p[132 + i * 12..136 + i * 12] == tag),
+                "missing required tag {}",
+                std::str::from_utf8(tag).unwrap()
+            );
+        }
     }
 }
