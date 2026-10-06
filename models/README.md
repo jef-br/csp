@@ -4,18 +4,20 @@ Every BiRefNet `.onnx` export lives here and nowhere else. The files themselves
 are gitignored (`*.onnx`) — they are build inputs, not source — so this README is
 the only committed file, and it is what makes the folder exist in a fresh clone.
 
-`build.rs` reads exactly one of them:
+`build.rs` reads exactly two of them — the primary and a fallback that runs only on images the
+primary finds no subject in:
 
 ```rust
 const MODEL_DIR:  &str = "models";
 const MODEL_FILE: &str = "birefnet_lite_384_int8.onnx";
+const FALLBACK_MODEL_FILE: &str = "birefnet_lite_512.onnx";
 ```
 
-`MODEL_FILE` is a bare filename resolved inside this folder. It is the single
-switch that decides which export gets encrypted and compiled into the exe — so
+`MODEL_FILE` and `FALLBACK_MODEL_FILE` are bare filenames resolved inside this folder. They are the
+only switches that decide which exports get encrypted and compiled into the exe — so
 dropping a new variant in here changes nothing until that line names it.
 
-A missing `MODEL_FILE` fails the **build**, naming the path. That is deliberate:
+A missing `MODEL_FILE` or `FALLBACK_MODEL_FILE` fails the **build**, naming the path. That is deliberate:
 the exe ships as one file with the weights inside it, so a model that isn't
 there must be caught at build time, never at run time.
 

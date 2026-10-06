@@ -100,11 +100,11 @@ mod tests {
         let out = run(img, &mask);
 
         assert_eq!(out.width(), out.height());
-        assert_eq!(out.width(), 94, "90 * 1.042 = 93.8");
+        assert_eq!(out.width(), 98, "90 * 1.084 = 97.6");
         // Centre of the output is subject, and the corners are background.
-        assert_eq!(*out.get_pixel(47, 47), Rgb([10, 10, 10]));
+        assert_eq!(*out.get_pixel(49, 49), Rgb([10, 10, 10]));
         assert_eq!(*out.get_pixel(1, 1), Rgb([200, 200, 200]));
-        assert_eq!(*out.get_pixel(92, 92), Rgb([200, 200, 200]));
+        assert_eq!(*out.get_pixel(96, 96), Rgb([200, 200, 200]));
     }
 
     #[test]
@@ -113,8 +113,8 @@ mod tests {
         // exactly its own value, and the subject band is copied untouched.
         let (img, mask) = scene(400, 400, Rect { x: 150, y: 150, w: 100, h: 100 }, [240, 240, 240], [0, 0, 0]);
         let out = run(img, &mask);
-        assert_eq!(out.dimensions(), (104, 104));
-        assert_eq!(*out.get_pixel(52, 52), Rgb([0, 0, 0]));
+        assert_eq!(out.dimensions(), (108, 108));
+        assert_eq!(*out.get_pixel(54, 54), Rgb([0, 0, 0]));
         assert_eq!(*out.get_pixel(0, 0), Rgb([240, 240, 240]));
     }
 
@@ -125,16 +125,16 @@ mod tests {
         // two-pass order fills them, since they are outside the image on both axes.
         let (img, mask) = scene(200, 100, Rect { x: 40, y: 20, w: 120, h: 60 }, [180, 190, 200], [30, 40, 50]);
         let out = run(img, &mask);
-        assert_eq!(out.dimensions(), (125, 125));
+        assert_eq!(out.dimensions(), (130, 130));
         assert_eq!(*out.get_pixel(2, 2), Rgb([180, 190, 200]), "top-left corner");
-        assert_eq!(*out.get_pixel(122, 122), Rgb([180, 190, 200]), "bottom-right corner");
-        assert_eq!(*out.get_pixel(62, 62), Rgb([30, 40, 50]), "centre is still subject");
+        assert_eq!(*out.get_pixel(127, 127), Rgb([180, 190, 200]), "bottom-right corner");
+        assert_eq!(*out.get_pixel(65, 65), Rgb([30, 40, 50]), "centre is still subject");
     }
 
     #[test]
     fn a_gradient_background_keeps_its_gradient_when_stretched() {
         // The case a flat fill loses. The ramp runs left-to-right and the stretch is horizontal,
-        // so the left band has to carry its gradient across 44 invented columns rather than
+        // so the left band has to carry its gradient across 49 invented columns rather than
         // settle at one averaged value.
         let mut img = RgbImage::new(120, 400);
         for y in 0..400 {
@@ -151,14 +151,14 @@ mod tests {
             }
         }
         let out = run(img, &mask);
-        assert_eq!(out.dimensions(), (208, 208), "200 * 1.042 = 208.4");
+        assert_eq!(out.dimensions(), (217, 217), "200 * 1.084 = 216.8");
 
         // Left band: source columns 0..12 (subject at 20, safety 8) stretched over output
-        // columns 0..56. Both ends pinned, and no reversal in between.
+        // columns 0..61. Both ends pinned, and no reversal in between.
         let row = out.height() / 2;
-        let band: Vec<u8> = (0..56).map(|x| out.get_pixel(x, row)[0]).collect();
+        let band: Vec<u8> = (0..61).map(|x| out.get_pixel(x, row)[0]).collect();
         assert_eq!(band[0], 0, "outer end is pinned to the image's own border pixel");
-        assert_eq!(band[55], 23, "inner end meets column 11 of the source, value 23");
+        assert_eq!(band[60], 23, "inner end meets column 11 of the source, value 23");
         assert!(
             band.windows(2).all(|w| w[0] <= w[1]),
             "a stretched gradient must stay monotonic, got {band:?}"

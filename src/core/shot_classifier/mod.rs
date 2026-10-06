@@ -54,6 +54,17 @@ pub struct ShotClassification {
     pub refinements: Vec<EdgeRefinement>,
 }
 
+/// Did the primary model find no subject, so the fallback model should be tried?
+///
+/// "No subject" is the existing [`shotcode::mask_too_small`] test — the mask covers under
+/// [`MASK_MIN_COVERAGE`](super::config::MASK_MIN_COVERAGE) of the frame — not a new rule. The
+/// failure this exists for (the 384 int8 model on striped knitwear) leaves every pixel below the
+/// threshold, so the mask is empty and sits well under that line. It also fires for the few
+/// close-ups where the primary latched onto a speck; the fallback gets a look at those too.
+pub fn needs_fallback(working: &image::RgbImage, mask: &Mask) -> bool {
+    shotcode::mask_too_small(working, mask)
+}
+
 /// Runs both passes for one instance: gates on all four edges, then
 /// refines only the ones the gate flagged.
 pub fn classify_instance(input: &RefinementInput, gate_margin_px: u32, params: RefineParams) -> ShotClassification {
@@ -73,5 +84,39 @@ pub fn classify_instance(input: &RefinementInput, gate_margin_px: u32, params: R
         touches_edges,
         mask_too_small: shotcode::mask_too_small(input.working_image, &input.instance.mask),
         refinements,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::RgbImage;
+
+    fn mask_with(fg_rows: u32) -> (RgbImage, Mask) {
+        let (w, h) = (100, 100);
+        let mut data = vec![0u8; (w * h) as usize];
+        data[..(w * fg_rows) as usize].fill(255);
+        (RgbImage::new(w, h), Mask { width: w, height: h, data })
+    }
+
+    #[test]
+    fn empty_mask_needs_fallback() {
+        let (img, mask) = mask_with(0);
+        assert!(needs_fallback(&img, &mask));
+    }
+
+    #[test]
+    fn mask_just_under_the_line_needs_fallback_and_at_it_does_not() {
+        // 100x100 frame: 4 rows = 4.0% (< 5%), 5 rows = 5.0% (not < 5%).
+        let (img, mask) = mask_with(4);
+        assert!(needs_fallback(&img, &mask));
+        let (img, mask) = mask_with(5);
+        assert!(!needs_fallback(&img, &mask));
+    }
+
+    #[test]
+    fn full_mask_skips_fallback() {
+        let (img, mask) = mask_with(100);
+        assert!(!needs_fallback(&img, &mask));
     }
 }

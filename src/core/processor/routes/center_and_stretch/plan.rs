@@ -148,32 +148,32 @@ mod tests {
     #[test]
     fn side_is_the_longest_bbox_edge_plus_margin() {
         // Portrait subject: height decides, width follows it into a square.
-        assert_eq!(plan(rect(100, 30, 1300, 1670), Pins::NONE).side, 1740); // 1670 * 1.042
+        assert_eq!(plan(rect(100, 30, 1300, 1670), Pins::NONE).side, 1810); // 1670 * 1.084
     }
 
     #[test]
     fn the_square_is_centred_on_the_subject() {
-        // Subject centre is (750, 865); a 1740 square centred there starts at -120, -5.
+        // Subject centre is (750, 865); a 1810 square centred there starts at -155, -40.
         let p = plan(rect(100, 30, 1300, 1670), Pins::NONE);
-        assert_eq!((p.x, p.y), (-120, -5));
+        assert_eq!((p.x, p.y), (-155, -40));
     }
 
     #[test]
     fn overhang_is_per_side_and_zero_where_real_pixels_reach() {
-        // The worked case: 1500x2000 source. Left and right reach past the frame, the top by a
-        // hair, and the bottom lands 265px inside it — so the bottom crops rather than stretches.
+        // The worked case: 1500x2000 source. Left and right reach past the frame, the top by 40px,
+        // and the bottom lands 230px inside it — so the bottom crops rather than stretches.
         let p = plan(rect(100, 30, 1300, 1670), Pins::NONE);
-        assert_eq!(p.overhang(1500, 2000), Overhang { top: 5, bottom: 0, left: 120, right: 120 });
+        assert_eq!(p.overhang(1500, 2000), Overhang { top: 40, bottom: 0, left: 155, right: 155 });
     }
 
     #[test]
     fn a_square_inside_the_image_has_no_overhang_and_crops() {
         let p = plan(rect(400, 400, 200, 200), Pins::NONE);
-        assert_eq!(p.side, 208);
+        assert_eq!(p.side, 217);
         assert_eq!(p.overhang(1000, 1000), Overhang::default());
         assert_eq!(
             p.real_region(1000, 1000),
-            Some(rect(396, 396, 208, 208)),
+            Some(rect(391, 391, 217, 217)),
             "the whole square is real pixels, so the region is the square itself"
         );
     }
@@ -182,28 +182,28 @@ mod tests {
     fn a_subject_filling_the_frame_overhangs_on_all_four_sides() {
         // Free-standing but tight: no cap on the stretch, by decision.
         let p = plan(rect(0, 0, 1000, 1000), Pins::NONE);
-        assert_eq!(p.side, 1042);
-        assert_eq!(p.overhang(1000, 1000), Overhang { top: 21, bottom: 21, left: 21, right: 21 });
+        assert_eq!(p.side, 1084);
+        assert_eq!(p.overhang(1000, 1000), Overhang { top: 42, bottom: 42, left: 42, right: 42 });
     }
 
     #[test]
     fn one_blocked_side_keeps_the_margin_and_moves_all_of_it_to_the_free_side() {
         // 28.jpg: 667x1000 frame, mask 474x987 flush against the top.
         let p = plan(rect(106, 0, 474, 987), Pins { top: true, ..Pins::NONE });
-        assert_eq!(p.side, 1028, "987 * 1.042 — a blocked side does not cost the margin");
+        assert_eq!(p.side, 1070, "987 * 1.084 — a blocked side does not cost the margin");
         assert_eq!(p.y, 0, "the blocked top does not move");
 
-        // All 41px of slack lands under the feet. 13 of them are real floor already in frame;
-        // the other 28 are new canvas the fill has to cover.
+        // All 83px of slack lands under the feet. 13 of them are real floor already in frame;
+        // the other 70 are new canvas the fill has to cover.
         let over = p.overhang(667, 1000);
         assert_eq!(over.top, 0, "nothing is ever invented above a subject that continues off-frame");
-        assert_eq!(over.bottom, 28);
+        assert_eq!(over.bottom, 70);
     }
 
     #[test]
     fn an_axis_blocked_at_both_ends_gets_no_margin() {
         // EIX 1010 on a 640x840 frame: the subject runs off the top and the bottom, so the
-        // vertical axis needs 840 flat rather than 840 * 1.042, and the square is 840.
+        // vertical axis needs 840 flat rather than 840 * 1.084, and the square is 840.
         let p = plan(rect(60, 0, 520, 840), Pins { top: true, bottom: true, ..Pins::NONE });
         assert_eq!(p.side, 840);
         assert_eq!(p.y, 0);

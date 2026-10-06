@@ -128,7 +128,8 @@ always built into the exe (no feature flag).
 | `segmentation` | `Mask`, `Instance`, `SegmentationModel` | model-agnostic types |
 | `sampling` | `ColorStats`, `sample_background_color` | per-edge background colour |
 | `shotcode` | `ShotCode`, `derive`, `eix_bits`, `NO_VERDICT_EIX` | the `EIX`/`BGC`/`FGC` debug tag |
-| `birefnet` | `BiRefNetConfig`, `BiRefNetModel` | ONNX inference, always built in |
+| `birefnet` | `BiRefNetConfig`, `BiRefNetModel` | ONNX inference, always built in; `load` (primary) and `load_fallback` |
+| (`mod`) | `needs_fallback` | did the primary find no subject? = `mask_too_small` |
 
 `EdgeView` is the load-bearing idea: every per-edge algorithm is written once in "top edge, depth
 increasing downward" terms against the `Grid` trait, and the other three edges are presented by
@@ -166,6 +167,14 @@ module docstring.
 - BiRefNet inference is always built in; `core::preflight` aborts at startup, before any file is
   touched, if the ONNX session can't be built (e.g. the embedded runtime can't be unpacked to any
   writable directory) — a batch never silently falls back to R3 for every image.
+- **Two models, one fallback.** The primary model (384 int8, `build.rs` `MODEL_FILE`) is fast but
+  returns an empty mask on some images (striped knitwear: logits near -11 everywhere). When
+  `shot_classifier::needs_fallback` says so — the mask covers under `MASK_MIN_COVERAGE` (5%) of the
+  frame, the same `mask_too_small` test routing already uses — `core::classify` re-runs the image
+  through the 512 float model (`FALLBACK_MODEL_FILE`) and keeps that mask. The fallback session is
+  built lazily on first need (`core::fallback_model`), so the common path pays nothing. It is *not*
+  checked by `preflight`: if it cannot build or run, the primary's mask stands. The rule also fires
+  for the few close-ups where the primary latched onto a speck; those get a second look too.
 
 ---
 
@@ -182,7 +191,7 @@ raises the effort bar without pretending a determined analyst can't recover the 
 **Met.** `cargo build --release` produces one exe file (~195MB) and nothing else. Two things are
 compiled in:
 
-- **The model.** `shot_classifier::birefnet` embeds one BiRefNet export and loads it through
+- **The models.** `shot_classifier::birefnet` embeds two BiRefNet exports (primary, plus the fallback described in §4, each under its own key) and loads each through
   `Session::commit_from_memory`. It is stored **encrypted**: `build.rs` reads the plaintext out of
   `models/` — `MODEL_DIR` plus `MODEL_FILE` there are the only things that pick which export ships —
   encrypts it under a per-build key (a ChaCha20 keystream in `shot_classifier::cipher`,
@@ -198,8 +207,8 @@ compiled in:
 
 Both source files are gitignored — the model in `models/`, `onnxruntime.dll` at the repo root — and
 a missing one is a *build* failure naming the file, not a runtime surprise. `models/` is the single
-place any `.onnx` lives; it holds every variant being tried, and only `MODEL_FILE` decides which one
-is baked in. The only files CSP still touches beside the exe are
+place any `.onnx` lives; it holds every variant being tried, and only `MODEL_FILE` (primary) and
+`FALLBACK_MODEL_FILE` (fallback) decide which are baked in. The only files CSP still touches beside the exe are
 optional markers (`CSP_DEBUG_TAGS`) and the `ORT_DYLIB_PATH` override the `examples/` dev harness
 uses to point at a hand-placed runtime.
 

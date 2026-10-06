@@ -47,6 +47,14 @@ static ENC_MODEL: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/model.onnx.e
 // MODEL_KEY / MODEL_NONCE, generated fresh for this build by build.rs (never committed).
 include!(concat!(env!("OUT_DIR"), "/model_key.rs"));
 
+/// The fallback weights, stored the same way as [`ENC_MODEL`]: encrypted, compiled in, named by
+/// `build.rs`'s `FALLBACK_MODEL_FILE`. It runs only on images the primary model finds no subject
+/// in (see [`super::needs_fallback`]), so [`BiRefNetModel::load_fallback`] is called lazily.
+static ENC_FALLBACK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/fallback.onnx.enc"));
+
+// FALLBACK_KEY / FALLBACK_NONCE, its own fresh key pair from build.rs.
+include!(concat!(env!("OUT_DIR"), "/fallback_key.rs"));
+
 const IMAGENET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const IMAGENET_STD: [f32; 3] = [0.229, 0.224, 0.225];
 
@@ -97,6 +105,13 @@ impl BiRefNetModel {
     /// graph, which is fatal for the run — see `core::preflight`. Call [`Self::init_runtime`] first.
     pub fn load(config: BiRefNetConfig) -> Result<Self, String> {
         let model = super::cipher::decrypt(ENC_MODEL, &MODEL_KEY, &MODEL_NONCE);
+        Self::build(config, |b| b.commit_from_memory(&model)).map_err(|e| e.to_string())
+    }
+
+    /// Loads the embedded fallback model, with the same in-memory decrypt and session settings as
+    /// [`Self::load`]. Call it on first need, not at startup: it costs a second ~180MB session.
+    pub fn load_fallback(config: BiRefNetConfig) -> Result<Self, String> {
+        let model = super::cipher::decrypt(ENC_FALLBACK, &FALLBACK_KEY, &FALLBACK_NONCE);
         Self::build(config, |b| b.commit_from_memory(&model)).map_err(|e| e.to_string())
     }
 

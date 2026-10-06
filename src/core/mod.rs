@@ -39,8 +39,19 @@ fn classify(prep: &Prepared) -> Option<(ShotClassification, Mask)> {
     use crate::core::shot_classifier::segmentation::SegmentationModel;
     use crate::core::shot_classifier::{classify_instance, RefineParams, RefinementInput};
 
-    let instances = model().ok()?.segment(&prep.working).ok()?;
-    let instance = instances.into_iter().next()?;
+    let mut instance = model().ok()?.segment(&prep.working).ok()?.into_iter().next()?;
+
+    // The primary found no subject: give the larger fallback model a go, and keep its mask. If the
+    // fallback cannot load or fails on this image, the primary's mask stands — a degraded answer,
+    // not a lost image.
+    if shot_classifier::needs_fallback(&prep.working, &instance.mask) {
+        if let Some(better) = fallback_model()
+            .and_then(|m| m.segment(&prep.working).ok())
+            .and_then(|i| i.into_iter().next())
+        {
+            instance = better;
+        }
+    }
 
     let input = RefinementInput {
         working_image: &prep.working,
@@ -78,12 +89,34 @@ fn model() -> Result<&'static shot_classifier::BiRefNetModel, String> {
         .map_err(|e| e.clone())
 }
 
+/// The fallback model instance, built the first time an image needs it.
+///
+/// Same sharing rule as [`model`]: one session across all rayon workers, outcome cached either way.
+/// `None` when it will not build; the caller keeps the primary's mask. Not part of [`preflight`]
+/// on purpose — see there.
+fn fallback_model() -> Option<&'static shot_classifier::BiRefNetModel> {
+    use shot_classifier::{BiRefNetConfig, BiRefNetModel};
+    use std::sync::OnceLock;
+
+    static FALLBACK: OnceLock<Result<BiRefNetModel, String>> = OnceLock::new();
+    // The runtime is already initialised: the fallback is only reached after `model()` succeeded.
+    FALLBACK
+        .get_or_init(|| BiRefNetModel::load_fallback(BiRefNetConfig::default()))
+        .as_ref()
+        .ok()
+}
+
 /// Check the classifier can actually run, before any image is touched.
 ///
 /// The weights are embedded now, so the only file this can fail to find is `onnxruntime.dll`.
 /// That, or a session that will not build, is an environment fault rather than an image outcome:
 /// it should stop the run loudly rather than quietly sending every image down the no-verdict
 /// route. R3 is for images the classifier looked at and could not judge — not for a broken build.
+///
+/// Only the primary session is checked. The fallback is built lazily and its failure degrades to
+/// the primary's mask, so it is not a reason to stop a run — and building it here would charge
+/// every run a second ~180MB session for images that may never need it. Both models are embedded
+/// and share the same runtime, so a fallback that cannot build while the primary can is unlikely.
 ///
 /// Callers run this once at startup and abort on `Err`. It doubles as the point where the ~180MB
 /// session is paid for, off the batch's critical path.
