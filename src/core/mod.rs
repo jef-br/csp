@@ -6,6 +6,7 @@ pub mod preprocessor;
 pub mod processor;
 pub mod runtime;
 pub mod shot_classifier;
+pub mod trace;
 
 use shot_classifier::{Mask, ShotClassification};
 use preprocessor::Prepared;
@@ -13,8 +14,15 @@ use std::path::Path;
 
 /// Full per-file pipeline.
 pub fn process_file(input: &Path, output: &Path, backup: &Path) -> Result<(), String> {
+    let _trace = trace::begin(input);
     let prep = preprocessor::prepare(input)?;
     let classified = classify(&prep);
+    trace::note(|| match &classified {
+        Some((class, mask)) => {
+            format!("shot code: {}", shot_classifier::shotcode::derive(&prep.working, mask, class).tags())
+        }
+        None => "shot code: no verdict (classifier failed on this image)".into(),
+    });
     let shot = classified
         .as_ref()
         .map(|(class, mask)| processor::routes::Shot { class, mask });
@@ -41,6 +49,7 @@ fn classify(prep: &Prepared) -> Option<(ShotClassification, Mask)> {
 
     let instances = model().ok()?.segment(&prep.working).ok()?;
     let instance = instances.into_iter().next()?;
+    trace::note(|| format!("mask covers {:.1}% of the frame", trace::coverage_pct(&instance.mask)));
 
     let input = RefinementInput {
         working_image: &prep.working,

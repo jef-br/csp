@@ -31,6 +31,8 @@ pub mod sampling;
 pub mod segmentation;
 pub mod shotcode;
 
+use super::trace;
+
 pub use birefnet::{BiRefNetConfig, BiRefNetModel};
 pub use geometry::Edge;
 pub use refine::{EdgeRefinement, RefineParams, RefinementInput};
@@ -58,6 +60,10 @@ pub struct ShotClassification {
 /// refines only the ones the gate flagged.
 pub fn classify_instance(input: &RefinementInput, gate_margin_px: u32, params: RefineParams) -> ShotClassification {
     let proximity = gate::gate(&input.instance.mask, gate_margin_px);
+    trace::image(trace::stage::GATE, "pass-1 gate: border bands, red = foreground found (pass 2 runs), green = clear", || {
+        trace::gate_view(input.working_image, &input.instance.mask, gate_margin_px, &proximity.near)
+    });
+    trace::note(|| format!("gate flagged {:?} (band {gate_margin_px}px)", proximity.near));
 
     let mut touches_edges = Vec::new();
     let mut refinements = Vec::with_capacity(proximity.near.len());
@@ -69,9 +75,12 @@ pub fn classify_instance(input: &RefinementInput, gate_margin_px: u32, params: R
         refinements.push(result);
     }
 
-    ShotClassification {
-        touches_edges,
-        mask_too_small: shotcode::mask_too_small(input.working_image, &input.instance.mask),
-        refinements,
-    }
+    let mask_too_small = shotcode::mask_too_small(input.working_image, &input.instance.mask);
+    trace::image(trace::stage::VERDICT, "verdict: red bar = subject touches that edge, orange = gate flagged it but refinement said no", || {
+        let near: Vec<Edge> = refinements.iter().map(|r| r.edge).collect();
+        trace::verdict_view(input.working_image, &input.instance.mask, &near, &touches_edges)
+    });
+    trace::note(|| format!("verdict: touches {touches_edges:?}, mask_too_small = {mask_too_small}"));
+
+    ShotClassification { touches_edges, mask_too_small, refinements }
 }

@@ -28,6 +28,7 @@ pub mod resize;
 pub mod save;
 
 use super::config;
+use super::trace;
 use super::shot_classifier::shotcode::{self, NO_VERDICT_EIX};
 use super::shot_classifier::{Mask, ShotClassification};
 use image::{GrayImage, RgbImage};
@@ -53,6 +54,7 @@ pub fn export(
     shot: Option<ShotInputs<'_>>,
 ) -> Result<(), String> {
     let sized = resize::to_envelope(img);
+    trace::image(trace::stage::FINAL, "final image as saved (after the output size envelope)", || sized.clone());
 
     if tags_enabled() {
         write_tagged(&sized, dest, shot)?;
