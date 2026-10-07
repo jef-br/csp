@@ -11,6 +11,8 @@
 //! `original`. Hand it the same image twice and the scale between them collapses to 1.0, which
 //! reduces the refinement to a no-op.
 
+pub mod optimizer;
+
 use super::config::WORKING_SIZE;
 use super::trace;
 use image::{DynamicImage, ImageReader, RgbImage};
@@ -73,6 +75,11 @@ pub fn preprocess(decoded: Decoded) -> Prepared {
 
     let working = downscale_to_working(&original);
     trace::image(trace::stage::WORKING, "working copy (longest side reduced for the model)", || working.clone());
+
+    // Enhance the working copy's colour so the segmentation model finds the subject more reliably.
+    // Only this copy is touched; `original` stays true-colour for the exporter to compose from.
+    let working = optimizer::optimize(&working);
+    trace::image(trace::stage::OPTIMIZED, "working copy after the colour optimiser (what BiRefNet sees)", || working.clone());
     Prepared { original, working }
 }
 
