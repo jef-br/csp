@@ -119,6 +119,9 @@ fn main() {
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("img");
 
+        // Debug trace (CSP_TRACE_DIR): every stage image this run produces, as `<stem>  -  NN.jpg`.
+        let _trace = csp::core::trace::begin(path);
+
         let image = match image::open(path) {
             Ok(img) => img.to_rgb8(),
             Err(e) => {
@@ -127,6 +130,7 @@ fn main() {
             }
         };
 
+        csp::core::trace::image(csp::core::trace::stage::WORKING, "image as run_dir feeds it (no EXIF or colour handling)", || image.clone());
         let instances = match model.segment(&image) {
             Ok(instances) => instances,
             Err(e) => {

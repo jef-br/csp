@@ -27,6 +27,7 @@
 
 use super::geometry::Rect;
 use super::segmentation::{Instance, Mask, SegmentationModel};
+use crate::core::trace;
 use image::{imageops::FilterType, RgbImage};
 use ort::session::Session;
 use ort::value::Tensor;
@@ -65,6 +66,8 @@ impl Default for BiRefNetConfig {
 pub struct BiRefNetModel {
     session: Session,
     config: BiRefNetConfig,
+    /// First stage number this model's debug-trace images use — see `core::trace::stage`.
+    trace_base: u8,
 }
 
 impl BiRefNetModel {
@@ -97,7 +100,7 @@ impl BiRefNetModel {
     /// graph, which is fatal for the run — see `core::preflight`. Call [`Self::init_runtime`] first.
     pub fn load(config: BiRefNetConfig) -> Result<Self, String> {
         let model = super::cipher::decrypt(ENC_MODEL, &MODEL_KEY, &MODEL_NONCE);
-        Self::build(config, |b| b.commit_from_memory(&model)).map_err(|e| e.to_string())
+        Self::build(config, trace::stage::PRIMARY, |b| b.commit_from_memory(&model)).map_err(|e| e.to_string())
     }
 
     /// Loads a model from disk instead of the embedded one.
@@ -112,12 +115,13 @@ impl BiRefNetModel {
         if !model.is_file() {
             return Err(format!("BiRefNet model not found at {}", model.display()));
         }
-        Self::build(config, |b| b.commit_from_file(model)).map_err(|e| e.to_string())
+        Self::build(config, trace::stage::PRIMARY, |b| b.commit_from_file(model)).map_err(|e| e.to_string())
     }
 
     /// The session settings both loaders share; only the source of the graph differs.
     fn build(
         config: BiRefNetConfig,
+        trace_base: u8,
         commit: impl FnOnce(ort::session::builder::SessionBuilder) -> ort::Result<Session>,
     ) -> ort::Result<Self> {
         // One intra-op thread on purpose: `app::batch` fans images across cores
@@ -132,7 +136,7 @@ impl BiRefNetModel {
             .with_memory_pattern(false)?
             .with_intra_threads(1)?;
         let session = commit(builder)?;
-        Ok(BiRefNetModel { session, config })
+        Ok(BiRefNetModel { session, config, trace_base })
     }
 
     /// Reads the model's declared NCHW input side. Dynamic axes come back as `-1`, which would
@@ -178,6 +182,7 @@ impl SegmentationModel for BiRefNetModel {
         // Plain resize (no letterbox/padding) per BiRefNet's own
         // preprocessing, then ImageNet normalization.
         let resized = image::imageops::resize(image, in_w, in_h, FilterType::Triangle);
+        trace::image(self.trace_base, trace::MODEL_STEPS[0], || resized.clone());
         let mut chw = vec![0f32; 3 * (in_h * in_w) as usize];
         let plane = (in_h * in_w) as usize;
         for (i, px) in resized.pixels().enumerate() {
@@ -185,6 +190,7 @@ impl SegmentationModel for BiRefNetModel {
                 chw[c * plane + i] = (px[c] as f32 / 255.0 - IMAGENET_MEAN[c]) / IMAGENET_STD[c];
             }
         }
+        trace::image(self.trace_base + 1, trace::MODEL_STEPS[1], || trace::stretched_chw(&chw, in_w, in_h));
         let input = Tensor::from_array(([1usize, 3, in_h as usize, in_w as usize], chw))
             .map_err(|e| format!("build input tensor: {e}"))?;
 
@@ -220,8 +226,17 @@ impl SegmentationModel for BiRefNetModel {
         // The threshold moves into logit space once, and the column map is
         // shared by every row: both were per-pixel work whose answer never
         // varied per pixel.
+        trace::image(self.trace_base + 2, trace::MODEL_STEPS[2], || trace::stretched_gray(logit_data, in_w, in_h));
+        trace::image(self.trace_base + 3, trace::MODEL_STEPS[3], || {
+            let p: Vec<f32> = logit_data.iter().map(|&v| 1.0 / (1.0 + (-v).exp())).collect();
+            trace::unit_gray(&p, in_w, in_h)
+        });
         let (out_w, out_h) = (image.width(), image.height());
         let threshold = logit(self.config.mask_threshold);
+        trace::image(self.trace_base + 4, trace::MODEL_STEPS[4], || {
+            let on: Vec<f32> = logit_data.iter().map(|&v| if v > threshold { 1.0 } else { 0.0 }).collect();
+            trace::unit_gray(&on, in_w, in_h)
+        });
         let x_map: Vec<usize> = (0..out_w)
             .map(|ox| {
                 (((ox as f32 + 0.5) / out_w as f32 * in_w as f32) as usize)
@@ -242,6 +257,8 @@ impl SegmentationModel for BiRefNetModel {
             }
         }
         let mask = Mask { width: out_w, height: out_h, data };
+        trace::image(self.trace_base + 5, trace::MODEL_STEPS[5], || trace::mask_image(&mask));
+        trace::image(self.trace_base + 6, trace::MODEL_STEPS[6], || trace::tint(image, &mask));
 
         // No box/class from this model — report the full image as the
         // bbox so the gate/refine pipeline (which only reads the mask

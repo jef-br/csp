@@ -38,6 +38,7 @@ pub mod plan;
 use super::super::super::config;
 use super::super::super::preprocessor::Prepared;
 use super::{fallback, Shot};
+use crate::core::trace;
 use image::RgbImage;
 use plan::{Pins, SquarePlan};
 
@@ -57,14 +58,23 @@ pub fn apply(prep: &Prepared, shot: Shot<'_>) -> RgbImage {
     // An empty mask means the classifier marked nothing: there is no subject to centre on, so the
     // safe framing of R3 is a better answer than a square around an arbitrary point.
     let Some(subject) = shot.subject_bbox_in(prep) else {
+        trace::note(|| "R1: the mask is empty, so there is no subject to centre on: using R3 framing".into());
         return fallback::apply(prep);
     };
     // The edges the subject bleeds off are the ones the square may not move. `None` means no
     // square can respect them all — R3 frames the image safely rather than R1 guessing.
     let pins = Pins::from_edges(&shot.class.touches_edges);
     let Some(plan) = SquarePlan::new(subject, config::R1_MARGIN, pins) else {
+        trace::note(|| format!("R1: no square can respect the bled edges {pins:?}: using R3 framing"));
         return fallback::apply(prep);
     };
+    trace::image(trace::stage::R1_PLAN, "R1 plan: subject box (cyan), planned square (yellow), grey = area R1 must invent", || {
+        trace::plan_view(&prep.original, subject, plan.x, plan.y, plan.side)
+    });
+    trace::note(|| format!(
+        "R1: subject box {subject:?} (original pixels), square {}px at ({}, {}), overhang {:?}",
+        plan.side, plan.x, plan.y, plan.overhang(prep.original.width(), prep.original.height())
+    ));
     compose::compose(&prep.original, &plan, subject, safety_px(prep))
 }
 

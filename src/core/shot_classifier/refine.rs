@@ -20,6 +20,7 @@
 use super::geometry::{Edge, EdgeView, Grid, Rect};
 use super::sampling::{sample_background_color, ColorStats};
 use super::segmentation::{Instance, Mask};
+use crate::core::trace;
 use image::{Rgb, RgbImage};
 
 /// Everything pass 2 needs for one instance.
@@ -95,6 +96,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
     }
 
     let Some(min_cx) = min_cx else {
+        trace::note(|| format!("refine {edge:?}: the mask never reaches the {}px band, so nothing to refine (not touching)", params.band_px));
         // Pass 1 flagged the mask's bbox as near this edge, but the mask itself doesn't actually reach the band - nothing to refine.
         return EdgeRefinement {
             edge,
@@ -121,17 +123,22 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
         input.original_image.height(),
     );
     let crop = crop_image(input.original_image, original_roi);
+    let base = trace::stage::REFINE + 10 * trace::edge_slot(edge);
+    trace::image(base, "", || crop.clone());
 
     // Step 3: trimap from the working-resolution mask, upsampled into crop coordinates.
     let upsampled_mask = mask.upsample_region_nearest(working_roi, crop.width(), crop.height());
     let ring_px = ((params.safety_px as f32) * scale).round().max(2.0) as u32;
     let trimap = Trimap::from_mask(&upsampled_mask, ring_px);
+    trace::image(base + 1, "", || trace::mask_image(&upsampled_mask));
+    trace::image(base + 2, "", || trimap.to_image());
 
     // Step 4: sample fg/bg color, then classify the unknown ring.
     let band_px_full = ((params.band_px as f32) * scale).round().max(1.0) as u32;
     let safety_px_full = ((params.safety_px as f32) * scale).round().max(1.0) as u32;
     let bg = sample_background_color(&crop, &upsampled_mask, edge, band_px_full, safety_px_full);
     let fg = sample_foreground_color(&crop, &trimap);
+    trace::note(|| format!("refine {edge:?}: foreground colour sampled = {}, background colour sampled = {}", fg.is_some(), bg.is_some()));
 
     let refined = match (fg, bg) {
         (Some(fg), Some(bg)) => trimap.resolve(&crop, fg, bg),
@@ -139,6 +146,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
         // upsampled mask rather than guessing at a verdict.
         _ => upsampled_mask,
     };
+    trace::image(base + 3, "", || trace::mask_image(&refined));
 
     // Step 5: the refined mask says whether the boundary reaches the
     // actual border (canonical row/col 0) anywhere along this edge...
@@ -153,6 +161,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
     let narrow_px_full = ((params.narrow_band_px as f32) * scale).round().max(1.0) as u32;
     let touching = reaches_border
         && !is_graze(&refined, edge, band_px_full, narrow_px_full, params.graze_ratio_max);
+    trace::note(|| format!("refine {edge:?}: reaches the border = {reaches_border}, touching = {touching}"));
 
     EdgeRefinement { edge, touching, crop_region: original_roi }
 }
@@ -195,7 +204,9 @@ fn is_graze(mask: &Mask, edge: Edge, wide_px: u32, narrow_px: u32, ratio_max: f3
     if wide_mean <= 0.0 {
         return false;
     }
-    mean(&per_row[..narrow as usize]) / wide_mean < ratio_max
+    let ratio = mean(&per_row[..narrow as usize]) / wide_mean;
+    trace::note(|| format!("graze test {edge:?}: narrow/wide coverage = {ratio:.3} (below {ratio_max} counts as a graze)"));
+    ratio < ratio_max
 }
 
 fn crop_image(image: &RgbImage, rect: Rect) -> RgbImage {
@@ -302,6 +313,20 @@ impl Trimap {
 
     fn get(&self, x: u32, y: u32) -> TrimapLabel {
         self.labels[(y * self.width + x) as usize]
+    }
+
+    /// For the debug trace: white = subject, grey = unknown (matting decides), black = background.
+    fn to_image(&self) -> RgbImage {
+        let mut img = RgbImage::new(self.width.max(1), self.height.max(1));
+        for (px, label) in img.pixels_mut().zip(&self.labels) {
+            let v = match label {
+                TrimapLabel::Foreground => 255,
+                TrimapLabel::Unknown => 128,
+                TrimapLabel::Background => 0,
+            };
+            *px = Rgb([v, v, v]);
+        }
+        img
     }
 
     /// Classifies every "unknown" pixel by color distance to the sampled

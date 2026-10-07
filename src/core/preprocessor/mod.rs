@@ -12,6 +12,7 @@
 //! reduces the refinement to a no-op.
 
 use super::config::WORKING_SIZE;
+use super::trace;
 use image::{DynamicImage, ImageReader, RgbImage};
 use std::path::Path;
 use tintbox::format::decode::TYPE_RGB_8;
@@ -58,15 +59,20 @@ pub fn load(path: &Path) -> Result<Decoded, String> {
 /// Flatten alpha onto white, colour-manage into sRGB, and derive the working-resolution copy.
 pub fn preprocess(decoded: Decoded) -> Prepared {
     let mut original = flatten_onto_white(&decoded.image);
+    trace::image(trace::stage::ORIGINAL, "original: decoded, EXIF-rotated, alpha flattened on white", || original.clone());
 
     // A source tagged with a non-sRGB RGB profile gets colour-managed into sRGB here, before any
     // downstream pixel math runs on it. An untagged image, or one already tagged sRGB, is left
     // untouched.
     if let Some(icc) = decoded.icc_profile.as_deref() {
         original = convert_to_srgb(original, icc);
+        trace::image(trace::stage::ORIGINAL_SRGB, "original after colour management into sRGB (file had an ICC profile)", || original.clone());
+    } else {
+        trace::note(|| "no ICC profile in the file: colours left as they are".into());
     }
 
     let working = downscale_to_working(&original);
+    trace::image(trace::stage::WORKING, "working copy (longest side reduced for the model)", || working.clone());
     Prepared { original, working }
 }
 
