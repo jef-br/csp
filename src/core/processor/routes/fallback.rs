@@ -33,7 +33,7 @@ mod tests {
 
     fn prepared(w: u32, h: u32) -> Prepared {
         let img = RgbImage::from_pixel(w, h, Rgb([10, 20, 30]));
-        Prepared { original: img.clone(), working: img }
+        Prepared { original: img.clone(), working: img.clone(), model_input: img }
     }
 
     #[test]

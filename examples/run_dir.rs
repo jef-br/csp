@@ -26,8 +26,9 @@
 //!   `--` separates the stem from the tags; `=` stands in for the spec's
 //!   `:` (a colon is illegal in Windows filenames).
 //!
-//! The shot code is derived by `csp::core::shot_classifier::shotcode`, the
-//! same code the pipeline exporter uses for its `CSP_DEBUG_TAGS` output.
+//! The EIX bits come from `csp::core::shot_classifier::shotcode`, the colours from
+//! `csp::core::exporter::colors` — the same code the pipeline exporter uses for its
+//! `CSP_DEBUG_TAGS` output.
 //!
 //! Usage:
 //!   cargo run --release --example run_dir -- <input> [output_dir]
@@ -40,7 +41,8 @@
 
 use csp::core::shot_classifier::geometry::Rect;
 use csp::core::shot_classifier::refine::{RefineParams, RefinementInput};
-use csp::core::shot_classifier::shotcode::{self, ShotCode};
+use csp::core::exporter::{self, colors};
+use csp::core::shot_classifier::shotcode::eix_bits;
 use csp::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, SegmentationModel};
 use image::{Rgb, RgbImage};
 use std::path::{Path, PathBuf};
@@ -147,8 +149,10 @@ fn main() {
         let result = classify_instance(&input, 20, RefineParams::default());
 
         // --- shot code: BGC/FGC from the mask, EIX from the verdict (shared with the pipeline) ---
-        let sc = shotcode::derive(&image, &inst.mask, &result);
-        let ShotCode { eix, bgc, fgc, mask_too_small } = &sc;
+        let eix = eix_bits(&result.touches_edges);
+        let sampled = colors::sample(&image, &inst.mask);
+        let colors::ShotColors { bgc, fgc } = &sampled;
+        let mask_too_small = &result.mask_too_small;
         let fg_ratio = fg as f64 / total as f64;
 
         let edges: Vec<&str> = result.touches_edges.iter().map(edge_name).collect();
@@ -168,7 +172,7 @@ fn main() {
         }
 
         // step 0: the input image, verbatim, renamed with the shot code.
-        let tagged_name = format!("{stem}{}.{ext}", sc.tags());
+        let tagged_name = format!("{stem}{}.{ext}", exporter::tags(&eix, &sampled));
         let _ = std::fs::copy(path, output_dir.join(&tagged_name));
 
         // step 1: BiRefNet foreground mask, full frame.

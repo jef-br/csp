@@ -27,7 +27,7 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 | Stage | Module | In → Out |
 |---|---|---|
 | **load** | `core::preprocessor::load` | path → `Decoded` (image + ICC profile, EXIF applied) |
-| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + working copy) |
+| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + true-colour working copy + optimised `model_input`) |
 | **classify** | `core::classify` (private) | `Prepared` → `Option<(ShotClassification, Mask)>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
 | **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source moved to `PPRONI-BACKUP` |
@@ -37,8 +37,9 @@ debug tags below.
 
 ### Why two resolutions
 
-`Prepared` carries the image twice: `original` at full resolution and `working` reduced to
-`config::WORKING_SIZE` on its longest side.
+`Prepared` carries the image three times: `original` at full resolution, `working` reduced to
+`config::WORKING_SIZE` on its longest side (both true colour), and `model_input`, the working copy
+after the colour optimiser — the only image BiRefNet sees.
 
 The segmentation model runs on `working`. Its pass-2 refinement then re-decides the subject boundary
 against full-resolution pixels in `original`, because the mask it produced is upsampled and not
@@ -84,7 +85,7 @@ it — that is expected, not drift.
 | `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare` |
 | `core::processor::routes` | `Route`, `Route::select`, `dispatch` |
 | `core::processor::routes::{center_and_stretch, crop_square, fallback}` | `apply` |
-| `core::exporter` | `export`, `ShotInputs`; `save::save_jpeg_srgb`, `icc::srgb_profile` |
+| `core::exporter` | `export`, `ShotInputs`, `shot_tags`; `colors::sample` (BGC/FGC); `save::save_jpeg_srgb`, `icc::srgb_profile` |
 
 The refine params live in `config` next to `WORKING_SIZE` because they are expressed in
 working-resolution pixels — change one and the others shift meaning.
@@ -104,14 +105,15 @@ output from the shot classifier's verdict:
 `EIX` is the 4-bit top-right-bottom-left edge string — always the classifier's real verdict, the
 same one `Route::select` routed on; `BGC`/`FGC` are the dominant background / weighted-median
 foreground colours, each emitted only when sampleable. `=` stands in for the spec's `:` (illegal in
-Windows filenames). All three are derived in `shot_classifier::shotcode`, shared with the `run_dir`
-dev harness. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
+Windows filenames). `EIX` comes from `shot_classifier::shotcode::eix_bits`; `BGC`/`FGC` are sampled
+once, by `exporter::colors`, from the true-colour `working` copy and the mask — never from
+`model_input`. The `run_dir` dev harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
 the name carries `EIX=____` and no segmask is written.
 
-`shotcode::ShotCode` also carries `full_bleed`: a tiny mask with no uniform background (probable
-full-bleed close-up). It is informational only and never overrides `eix` — a tag must never claim an
-edge intersection the pipeline didn't actually route on. `full_bleed` doesn't appear in the filename
-today; `run_dir`'s console output and `zzz_results.json` are where it's currently visible.
+`ShotClassification::mask_too_small` flags a mask that covers too little of the frame to be a
+subject. It is informational for the tag and never overrides `eix` — a tag must never claim an edge
+intersection the pipeline didn't actually route on. It doesn't appear in the filename today;
+`run_dir`'s console output and `zzz_results.json` are where it's currently visible.
 
 ### `core::shot_classifier` — the classifier
 
@@ -127,7 +129,7 @@ always built into the exe (no feature flag).
 | `geometry` | `Edge`, `Grid`, `EdgeView`, `Rect` | edge-relative coordinates |
 | `segmentation` | `Mask`, `Instance`, `SegmentationModel` | model-agnostic types |
 | `sampling` | `ColorStats`, `sample_background_color` | per-edge background colour |
-| `shotcode` | `ShotCode`, `derive`, `eix_bits`, `NO_VERDICT_EIX` | the `EIX`/`BGC`/`FGC` debug tag |
+| `shotcode` | `eix_bits`, `mask_too_small`, `NO_VERDICT_EIX` | the `EIX` debug tag bits |
 | `birefnet` | `BiRefNetConfig`, `BiRefNetModel` | ONNX inference, always built in |
 
 `EdgeView` is the load-bearing idea: every per-edge algorithm is written once in "top edge, depth
@@ -252,7 +254,7 @@ What each container now says:
   failure), the desktop folder bootstrap, and `batch::run`'s rayon fan-out with its one level of
   subfolder recursion mirrored into `PPRONI-OUTPUT` and `PPRONI-BACKUP`.
 - **Preprocessor** — decode + EXIF, the unconditional alpha flatten onto white, the sRGB branch,
-  and `Prepared { original, working }`.
+  and `Prepared { original, working, model_input }`.
 - **Shot Classifier** — segmentation, pass-1 `gate`, pass-2 `refine_edge`, the graze test, and the
   `ShotClassification` + `Mask` that leaves for the Processor. The no-verdict `None` is a node of
   its own, because it is not the same thing as an empty edge list.

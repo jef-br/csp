@@ -17,12 +17,6 @@ pub fn process_file(input: &Path, output: &Path, backup: &Path) -> Result<(), St
     let _trace = trace::begin(input);
     let prep = preprocessor::prepare(input)?;
     let classified = classify(&prep);
-    trace::note(|| match &classified {
-        Some((class, mask)) => {
-            format!("shot code: {}", shot_classifier::shotcode::derive(&prep.working, mask, class).tags())
-        }
-        None => "shot code: no verdict (classifier failed on this image)".into(),
-    });
     let shot = classified
         .as_ref()
         .map(|(class, mask)| processor::routes::Shot { class, mask });
@@ -35,7 +29,7 @@ pub fn process_file(input: &Path, output: &Path, backup: &Path) -> Result<(), St
     exporter::export(&img, output, input, backup, shot)
 }
 
-/// Run the shot classifier over the working-resolution copy.
+/// Run the shot classifier: the model sees the optimised copy, the edge checks the true-colour one.
 ///
 /// `None` means no verdict — the model is unavailable, or inference failed on this image. That is
 /// not an error for the batch: `routes::dispatch` sends a no-verdict image down R3, which frames it
@@ -47,7 +41,7 @@ fn classify(prep: &Prepared) -> Option<(ShotClassification, Mask)> {
     use crate::core::shot_classifier::segmentation::SegmentationModel;
     use crate::core::shot_classifier::{classify_instance, RefineParams, RefinementInput};
 
-    let instances = model().ok()?.segment(&prep.working).ok()?;
+    let instances = model().ok()?.segment(&prep.model_input).ok()?;
     let instance = instances.into_iter().next()?;
     trace::note(|| format!("mask covers {:.1}% of the frame", trace::coverage_pct(&instance.mask)));
 

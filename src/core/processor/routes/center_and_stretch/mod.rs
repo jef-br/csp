@@ -98,7 +98,7 @@ mod tests {
     }
 
     fn run(img: RgbImage, mask: &Mask) -> RgbImage {
-        let prep = Prepared { original: img.clone(), working: img };
+        let prep = Prepared { original: img.clone(), working: img.clone(), model_input: img };
         let class = ShotClassification::default();
         apply(&prep, Shot { class: &class, mask })
     }
