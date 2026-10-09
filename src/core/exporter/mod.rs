@@ -14,8 +14,8 @@
 //! presence matters. Delete it to turn tagging back off. This marker is the *only* thing CSP ever
 //! looks for beside the exe; the runtime and the weights are inside it.
 //!
-//! When on, each output is renamed `<stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]` from the shot
-//! classifier's verdict, with the segmentation mask written alongside as `<stem>_segmask.jpg` —
+//! When on, each output is renamed `<stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]`: EIX from the shot
+//! classifier's verdict, BGC/FGC sampled here (`colors`) from the true-colour working copy, with the segmentation mask written alongside as `<stem>_segmask.jpg` —
 //! upscaled (nearest-neighbour) to the output image's size and saved as sRGB JPEG, so it overlays
 //! the tagged output pixel-for-pixel. When the classifier produced no verdict the name carries
 //! `EIX=____` and no
@@ -23,12 +23,13 @@
 //! session will not build, a systematic run of all-`EIX=____` files no longer means a broken
 //! install — it points at the classifier or the images themselves.
 
+pub mod colors;
 pub mod icc;
 pub mod resize;
 pub mod save;
 
 use super::config;
-use super::shot_classifier::shotcode::{self, NO_VERDICT_EIX};
+use super::shot_classifier::shotcode::{eix_bits, NO_VERDICT_EIX};
 use super::shot_classifier::{Mask, ShotClassification};
 use image::{GrayImage, RgbImage};
 use std::path::Path;
@@ -37,7 +38,7 @@ use std::sync::OnceLock;
 /// Everything the debug tags need from the classifier, threaded through from `core::process_file`.
 /// `None` at the call site means "no verdict".
 pub struct ShotInputs<'a> {
-    /// The working-resolution image the mask lines up with — BGC/FGC are sampled from it.
+    /// The true-colour working-resolution image the mask lines up with — BGC/FGC are sampled from it.
     pub working: &'a RgbImage,
     /// The working-resolution segmentation mask.
     pub mask: &'a Mask,
@@ -89,6 +90,29 @@ fn tags_enabled() -> bool {
     })
 }
 
+/// The filename tag string: `--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]`. EIX is the classifier's
+/// verdict; BGC/FGC are sampled here, from the true-colour working copy and the mask.
+/// `--` separates the stem from the tags and each tag from the next; `=` stands in for the spec's
+/// `:` (illegal in Windows filenames).
+pub fn shot_tags(shot: &ShotInputs<'_>) -> String {
+    tags(&eix_bits(&shot.class.touches_edges), &colors::sample(shot.working, shot.mask))
+}
+
+/// Join an EIX string and the sampled colours into the tag string. A colour that was not found is
+/// left out.
+pub fn tags(eix: &str, colors: &colors::ShotColors) -> String {
+    let mut s = format!("--EIX={eix}");
+    if let Some(c) = &colors.bgc {
+        s.push_str("--BGC=");
+        s.push_str(c);
+    }
+    if let Some(c) = &colors.fgc {
+        s.push_str("--FGC=");
+        s.push_str(c);
+    }
+    s
+}
+
 /// Save `<stem>--EIX=...[...].<ext>` and, when there is a verdict, `<stem>_segmask.jpg` beside it.
 /// With no verdict there is no mask: the name carries `EIX=____` and no segmask is written.
 fn write_tagged(img: &RgbImage, dest: &Path, shot: Option<ShotInputs<'_>>) -> Result<(), String> {
@@ -97,7 +121,7 @@ fn write_tagged(img: &RgbImage, dest: &Path, shot: Option<ShotInputs<'_>>) -> Re
     let ext = dest.extension().and_then(|s| s.to_str()).unwrap_or("jpg");
 
     let (tags, mask) = match &shot {
-        Some(s) => (shotcode::derive(s.working, s.mask, s.class).tags(), Some(s.mask)),
+        Some(s) => (shot_tags(s), Some(s.mask)),
         None => (format!("--EIX={NO_VERDICT_EIX}"), None),
     };
 
@@ -134,6 +158,18 @@ fn save_segmask(mask: &Mask, out_w: u32, out_h: u32, path: &Path) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tags_are_dash_joined_and_omit_missing_colours() {
+        let none = colors::ShotColors { bgc: None, fgc: None };
+        assert_eq!(tags("0110", &none), "--EIX=0110");
+
+        let bgc = colors::ShotColors { bgc: Some("ffffff".into()), fgc: None };
+        assert_eq!(tags("0110", &bgc), "--EIX=0110--BGC=ffffff");
+
+        let both = colors::ShotColors { bgc: Some("ffffff".into()), fgc: Some("102030".into()) };
+        assert_eq!(tags("0110", &both), "--EIX=0110--BGC=ffffff--FGC=102030");
+    }
 
     /// The debug segmask is written as an sRGB JPEG at the *output* size (not the working
     /// resolution), with the mask nearest-upscaled so the subject/background boundary stays crisp.

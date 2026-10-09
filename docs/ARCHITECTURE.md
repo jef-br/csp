@@ -84,7 +84,7 @@ it — that is expected, not drift.
 | `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare` |
 | `core::processor::routes` | `Route`, `Route::select`, `dispatch` |
 | `core::processor::routes::{center_and_stretch, crop_square, fallback}` | `apply` |
-| `core::exporter` | `export`, `ShotInputs`; `save::save_jpeg_srgb`, `icc::srgb_profile` |
+| `core::exporter` | `export`, `ShotInputs`, `shot_tags`; `colors::sample` (BGC/FGC); `save::save_jpeg_srgb`, `icc::srgb_profile` |
 
 The refine params live in `config` next to `WORKING_SIZE` because they are expressed in
 working-resolution pixels — change one and the others shift meaning.
@@ -104,14 +104,15 @@ output from the shot classifier's verdict:
 `EIX` is the 4-bit top-right-bottom-left edge string — always the classifier's real verdict, the
 same one `Route::select` routed on; `BGC`/`FGC` are the dominant background / weighted-median
 foreground colours, each emitted only when sampleable. `=` stands in for the spec's `:` (illegal in
-Windows filenames). All three are derived in `shot_classifier::shotcode`, shared with the `run_dir`
-dev harness. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
+Windows filenames). `EIX` comes from `shot_classifier::shotcode::eix_bits`; `BGC`/`FGC` are sampled
+once, by `exporter::colors`, from the true-colour `working` copy and the mask. The `run_dir` dev
+harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
 the name carries `EIX=____` and no segmask is written.
 
-`shotcode::ShotCode` also carries `full_bleed`: a tiny mask with no uniform background (probable
-full-bleed close-up). It is informational only and never overrides `eix` — a tag must never claim an
-edge intersection the pipeline didn't actually route on. `full_bleed` doesn't appear in the filename
-today; `run_dir`'s console output and `zzz_results.json` are where it's currently visible.
+`ShotClassification::mask_too_small` flags a mask that covers too little of the frame to be a
+subject. It is informational for the tag and never overrides `eix` — a tag must never claim an edge
+intersection the pipeline didn't actually route on. It doesn't appear in the filename today;
+`run_dir`'s console output and `zzz_results.json` are where it's currently visible.
 
 ### `core::shot_classifier` — the classifier
 
@@ -127,7 +128,7 @@ always built into the exe (no feature flag).
 | `geometry` | `Edge`, `Grid`, `EdgeView`, `Rect` | edge-relative coordinates |
 | `segmentation` | `Mask`, `Instance`, `SegmentationModel` | model-agnostic types |
 | `sampling` | `ColorStats`, `sample_background_color` | per-edge background colour |
-| `shotcode` | `ShotCode`, `derive`, `eix_bits`, `NO_VERDICT_EIX` | the `EIX`/`BGC`/`FGC` debug tag |
+| `shotcode` | `eix_bits`, `mask_too_small`, `NO_VERDICT_EIX` | the `EIX` debug tag bits |
 | `birefnet` | `BiRefNetConfig`, `BiRefNetModel` | ONNX inference, always built in |
 
 `EdgeView` is the load-bearing idea: every per-edge algorithm is written once in "top edge, depth
