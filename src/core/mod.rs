@@ -41,7 +41,7 @@ fn classify(prep: &Prepared) -> Option<(ShotClassification, Mask)> {
     use crate::core::shot_classifier::segmentation::SegmentationModel;
     use crate::core::shot_classifier::{classify_instance, RefineParams, RefinementInput};
 
-    let instances = model().ok()?.segment(&prep.model_input).ok()?;
+    let instances = model().ok()?.segment(prep.model_input()).ok()?;
     let instance = instances.into_iter().next()?;
     trace::note(|| format!("mask covers {:.1}% of the frame", trace::coverage_pct(&instance.mask)));
 

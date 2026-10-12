@@ -27,7 +27,7 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 | Stage | Module | In → Out |
 |---|---|---|
 | **load** | `core::preprocessor::load` | path → `Decoded` (image + ICC profile, EXIF applied) |
-| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + true-colour working copy + optimised `model_input`) |
+| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + true-colour working copy + optional optimised copy) |
 | **classify** | `core::classify` (private) | `Prepared` → `Option<(ShotClassification, Mask)>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
 | **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source moved to `PPRONI-BACKUP` |
@@ -38,8 +38,15 @@ debug tags below.
 ### Why two resolutions
 
 `Prepared` carries the image three times: `original` at full resolution, `working` reduced to
-`config::WORKING_SIZE` on its longest side (both true colour), and `model_input`, the working copy
-after the colour optimiser — the only image BiRefNet sees.
+`config::WORKING_SIZE` on its longest side (both true colour), and `optimized`, the working copy
+after the colour optimiser. `Prepared::model_input()` is the image BiRefNet sees: `optimized`, or
+`working` itself when the optimiser had nothing to change.
+
+The optimiser (`preprocessor::optimizer`) is a Levels move worked out once per image: per channel it
+finds `lo` (the highest value with at most 0.68% of the pixels at or below it) and `hi` (the 99.32
+percentile), shares the lowest `lo` and the highest `hi` across the three channels, derives a gamma
+`1 + lo/(255-lo) - (255-hi)/hi` kept between 0.01 and 9.99, and applies one 256-entry table to every
+channel. The one rounding happens when the table is built.
 
 The segmentation model runs on `working`. Its pass-2 refinement then re-decides the subject boundary
 against full-resolution pixels in `original`, because the mask it produced is upsampled and not
@@ -107,7 +114,7 @@ same one `Route::select` routed on; `BGC`/`FGC` are the dominant background / we
 foreground colours, each emitted only when sampleable. `=` stands in for the spec's `:` (illegal in
 Windows filenames). `EIX` comes from `shot_classifier::shotcode::eix_bits`; `BGC`/`FGC` are sampled
 once, by `exporter::colors`, from the true-colour `working` copy and the mask — never from
-`model_input`. The `run_dir` dev harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
+`model_input()`. The `run_dir` dev harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
 the name carries `EIX=____` and no segmask is written.
 
 `ShotClassification::mask_too_small` flags a mask that covers too little of the frame to be a
@@ -254,7 +261,7 @@ What each container now says:
   failure), the desktop folder bootstrap, and `batch::run`'s rayon fan-out with its one level of
   subfolder recursion mirrored into `PPRONI-OUTPUT` and `PPRONI-BACKUP`.
 - **Preprocessor** — decode + EXIF, the unconditional alpha flatten onto white, the sRGB branch,
-  and `Prepared { original, working, model_input }`.
+  and `Prepared { original, working, optimized }`.
 - **Shot Classifier** — segmentation, pass-1 `gate`, pass-2 `refine_edge`, the graze test, and the
   `ShotClassification` + `Mask` that leaves for the Processor. The no-verdict `None` is a node of
   its own, because it is not the same thing as an empty edge list.

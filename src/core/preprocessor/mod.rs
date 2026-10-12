@@ -4,8 +4,9 @@
 //!
 //! **preprocess (homogenize)** — flatten any alpha onto white, colour-manage into sRGB, and produce
 //! the working-resolution copy. Everything downstream sees one shape: opaque sRGB pixels at two
-//! resolutions, no alpha channel and no unknown colour space. A third image, `model_input`, is the
-//! working copy run through the colour optimiser — it exists only to be shown to the model.
+//! resolutions, no alpha channel and no unknown colour space. A third image, `model_input()`, is the
+//! working copy run through the colour optimiser (or `working` itself when that changes nothing) —
+//! it exists only to be shown to the model.
 //!
 //! Both resolutions are kept because the shot classifier needs both: the segmentation model runs on
 //! `working`, and its pass-2 refinement re-decides the boundary against full-resolution pixels in
@@ -35,8 +36,17 @@ pub struct Prepared {
     /// The same image with its longest side reduced to `config::WORKING_SIZE` (never upscaled).
     /// True colour — the colour optimiser never touches it.
     pub working: RgbImage,
-    /// `working` after the colour optimiser: the only image BiRefNet sees.
-    pub model_input: RgbImage,
+    /// `working` after the colour optimiser, or `None` when the optimiser had nothing to change.
+    /// Read it through [`Prepared::model_input`].
+    pub optimized: Option<RgbImage>,
+}
+
+impl Prepared {
+    /// The image BiRefNet sees: the optimised copy, or `working` itself when the optimiser changed
+    /// nothing.
+    pub fn model_input(&self) -> &RgbImage {
+        self.optimized.as_ref().unwrap_or(&self.working)
+    }
 }
 
 /// Load and homogenize in one call — what the pipeline uses.
@@ -83,9 +93,10 @@ pub fn preprocess(decoded: Decoded) -> Prepared {
     // Enhance a copy of the working image's colour so the segmentation model finds the subject more
     // reliably. `working` and `original` stay true-colour: the exporter composes from `original` and
     // samples BGC/FGC from `working`.
-    let model_input = optimizer::optimize(&working);
-    trace::image(trace::stage::OPTIMIZED, "working copy after the colour optimiser (what BiRefNet sees)", || model_input.clone());
-    Prepared { original, working, model_input }
+    let optimized = optimizer::optimize(&working);
+    let prep = Prepared { original, working, optimized };
+    trace::image(trace::stage::OPTIMIZED, "working copy after the colour optimiser (what BiRefNet sees)", || prep.model_input().clone());
+    prep
 }
 
 // Composite onto white so transparent pixels become white pixels. The alpha channel is not carried
@@ -173,6 +184,18 @@ mod tests {
         let prep = preprocess(Decoded { image: DynamicImage::ImageRgb8(img.clone()), icc_profile: None });
 
         assert_eq!(prep.working, img, "working must be the untouched (here: not even resized) image");
-        assert_ne!(prep.model_input, prep.working, "model_input must be the optimised copy");
+        assert_ne!(prep.model_input(), &prep.working, "model_input must be the optimised copy");
+    }
+
+    /// When the optimiser has nothing to change, the model is shown `working` itself: no copy.
+    #[test]
+    fn an_unchanged_image_is_shown_to_the_model_as_working_itself() {
+        let mut img = RgbImage::new(32, 32);
+        for (i, px) in img.pixels_mut().enumerate() {
+            *px = if i % 2 == 0 { Rgb([0, 0, 0]) } else { Rgb([255, 255, 255]) };
+        }
+        let prep = preprocess(Decoded { image: DynamicImage::ImageRgb8(img), icc_profile: None });
+        assert!(prep.optimized.is_none());
+        assert!(std::ptr::eq(prep.model_input(), &prep.working));
     }
 }
