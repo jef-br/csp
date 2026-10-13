@@ -271,8 +271,9 @@ What each container now says:
 - **Dev harness** — `examples/run_dir.rs`, replacing the proposed `CSP-Analyzer` container whose
   target (`src/bin/csp_analyzer.rs`) was deleted with the classical detector.
 
-Two green bold tags survive from the debug-image protocol, `SEGMASK` and `REFINE`, and they name
-files `run_dir` actually writes (`<stem>_1_segmask.png`, `<stem>_2_refine.png`). The older invented
+Two green bold tags survive from the debug-image protocol, `SEGMASK` and `REFINE`, and `run_dir`
+follows that protocol for the two snapshots it writes: `<stem>___3-class_10_SEGMASK.png` and
+`<stem>___3-class_20_REFINE.png` (naming rules in `docs/diagrams/README.md`). The older invented
 tags went with the detector.
 
 Edits must be made through the draw.io editor (the VS Code **Draw.io Integration** extension), or

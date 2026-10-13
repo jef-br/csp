@@ -4,13 +4,17 @@
 //!   <stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>].<ext>
 //!                          the input image, copied verbatim, renamed   (step 0)
 //!                          with the shot code derived so far
-//!   <stem>_1_segmask.png   BiRefNet foreground mask                    (step 1)
-//!   <stem>_2_refine.png    white canvas the size of the segmask with   (step 2)
+//!   <stem>___3-class_10_SEGMASK.png
+//!                          BiRefNet foreground mask                    (step 1)
+//!   <stem>___3-class_20_REFINE.png
+//!                          white canvas the size of the segmask with   (step 2)
 //!                          each gated edge's refined region pasted back
 //!                          (only if an edge was gated)
 //!
-//! plus `zzz_results.json` (named to sort last). The `_<n>_` infix keeps
-//! generated files sorted in pipeline order next to their source.
+//! plus `zzz_results.json` (named to sort last). Snapshots follow the diagram-tag protocol
+//! (`docs/diagrams/README.md`): `<stem>___<moduleindex>_<substep>_<TAG>.png`, where `<TAG>` is the
+//! green-bold word on the matching rectangle of `JBA2B.drawio.svg`, verbatim. Sorting the names
+//! alphabetically reproduces pipeline order, and the flat output keeps each image's files together.
 //!
 //! Shot code (partial — BG type comes later):
 //!   EIX  edge intersection, 4-bit TRBL (top-right-bottom-left). `1000`
@@ -48,6 +52,12 @@ use image::{Rgb, RgbImage};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_OUTPUT: &str = "test data/OUTPUT";
+
+// Snapshot name suffixes, `___<moduleindex>_<substep>_<TAG>.png`. Each TAG is the green-bold word on
+// its rectangle of `docs/diagrams/JBA2B.drawio.svg` and is copied verbatim. `3-class` is the Shot
+// Classifier container; the substeps are gapped by 10s in execution order inside it.
+const SEGMASK_SUFFIX: &str = "___3-class_10_SEGMASK.png";
+const REFINE_SUFFIX: &str = "___3-class_20_REFINE.png";
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -180,7 +190,7 @@ fn main() {
         for (i, px) in m.pixels_mut().enumerate() {
             px.0[0] = inst.mask.data[i];
         }
-        let _ = m.save(output_dir.join(format!("{stem}_1_segmask.png")));
+        let _ = m.save(output_dir.join(format!("{stem}{SEGMASK_SUFFIX}")));
 
         // step 2: one canvas the size of the segmask, white except for
         // the refined region of each gated edge, pasted back where it
@@ -198,7 +208,7 @@ fn main() {
                 let patch = crop_region(&image, *reg);
                 image::imageops::overlay(&mut canvas, &patch, reg.x as i64, reg.y as i64);
             }
-            let _ = canvas.save(output_dir.join(format!("{stem}_2_refine.png")));
+            let _ = canvas.save(output_dir.join(format!("{stem}{REFINE_SUFFIX}")));
         }
 
         let gate_json: Vec<String> = result
