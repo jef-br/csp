@@ -261,7 +261,8 @@ mod tests {
         let prep = Prepared {
             original: RgbImage::new(200, 200),
             working: RgbImage::new(100, 100),
-            optimized: None,
+            model_input: RgbImage::new(100, 100),
+            crop: Rect { x: 0, y: 0, w: 100, h: 100 },
         };
 
         let got = Shot { class: &class, mask: &mask }

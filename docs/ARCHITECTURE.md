@@ -27,7 +27,7 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 | Stage | Module | In → Out |
 |---|---|---|
 | **load** | `core::preprocessor::load` | path → `Decoded` (image + ICC profile, EXIF applied) |
-| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + true-colour working copy + optional optimised copy) |
+| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + true-colour working copy + the optimiser's crop); `Err` for an image with nothing but backdrop |
 | **classify** | `core::classify` (private) | `Prepared` → `Option<(ShotClassification, Mask)>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
 | **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source moved to `PPRONI-BACKUP` |
@@ -38,40 +38,36 @@ debug tags below.
 ### Why two resolutions
 
 `Prepared` carries the image three times: `original` at full resolution, `working` reduced to
-`config::WORKING_SIZE` on its longest side (both true colour), and `optimized`, the working copy
-after the colour optimiser. `Prepared::model_input()` is the image BiRefNet sees: `optimized`, or
-`working` itself when the optimiser had nothing to change.
+`config::WORKING_SIZE` on its longest side (both true colour), and `model_input`, the image BiRefNet
+sees: `working` after the optimiser. `Prepared::crop` says where `model_input` was cut from `working`.
 
-The optimiser (`preprocessor::optimizer`) is a Levels move worked out once per image: per channel it
-finds `lo` (the highest value with at most 0.68% of the pixels at or below it) and `hi` (the 99.32
-percentile), shares the lowest `lo` and the highest `hi` across the three channels, derives a gamma
-`1 + lo/(255-lo) - (255-hi)/hi` kept between 0.01 and 9.99, and applies one 256-entry table to every
-channel. The one rounding happens when the table is built.
+The optimiser is one function, `preprocessor::optimizer::optimize`, and does two things in order:
 
-The segmentation model runs on `working`. Its pass-2 refinement then re-decides the subject boundary
+1. **Colour balance.** A Levels move worked out once per image: per channel it finds `lo` (the highest
+   value with at most 0.68% of the pixels at or below it) and `hi` (the 99.32 percentile), shares the
+   lowest `lo` and the highest `hi` across the three channels, derives a gamma
+   `1 + lo/(255-lo) - (255-hi)/hi` kept between 0.01 and 9.99, and applies one 256-entry table to
+   every channel. The one rounding happens when the table is built.
+2. **Trim**, on the balanced image. The 16 border pixels (4 per edge, at 0/25/50/75% of the edge,
+   going round clockwise) give the backdrop colour range: per channel, the lowest and highest sample.
+   A pixel inside the range on all three channels is backdrop. Gaps are closed with a 2x2 window
+   (`TRIM_CLOSE_K`): a pixel only counts as product if it sits in a 2x2 block of non-backdrop pixels.
+   The tightest box around the product is squared to its largest side and grown on every side by the
+   larger of 10 px and 10% of that side (`TRIM_MARGIN_MIN_PX`, `TRIM_MARGIN_SHARE`). The balanced image
+   is cropped to that square, centred on the product and slid to stay inside the frame (the margin
+   shrinks if the frame is too narrow; if the product is longer than the frame's short side no square
+   fits, the margin drops to 10 px and the crop is cut at the frame). No product left: `Err`, the image is not processed and
+   stays in the input folder.
+
+`core::classify` shows the model only that crop, wrapped in `shot_classifier::CroppedModel`, which
+pastes the returned mask into a blank working-size canvas at the crop position (full-frame box). The
+gate, refinement and routes therefore see a full-frame mask, as if the model had been shown the whole
+frame.
+
+The segmentation model runs on the optimiser's crop of `working`. Its pass-2 refinement then re-decides the subject boundary
 against full-resolution pixels in `original`, because the mask it produced is upsampled and not
 pixel-accurate at the edge. Hand the classifier the same image twice and the scale between them
 collapses to 1.0, the refinement ring shrinks to its floor, and pass 2 stops doing anything.
-
-### Backdrop trim
-
-BiRefNet at 384px sometimes returns an empty mask for a product that sits small in a large empty
-frame, and finds it once the frame is tightened around it. `core::classify` therefore runs the model on
-a crop of `model_input()` chosen by `preprocessor::trim`, in three steps: trim away what matches the
-four corner colours (this removes false edges, such as white side bars), trim again against every
-colour on the edge of that result (with a tolerance for noise and soft light), then grow the box back
-out by 10-20% of its size (more when more was trimmed) so the edge verdict cannot change.
-
-The model's mask is pasted back into the full frame, zero outside the crop, so the gate, refinement,
-routing and exporter see a normal mask. Every way the trim can go wrong ends in the plain pass on the
-whole frame: the trimmed pass is empty, the model fails, or the mask runs into a crop edge that is not
-the image edge (the trim cut into the product, as with a white garment on white). In that last case
-the crop is first widened on that side, up to twice. The constants are `config::TRIM_*`.
-
-Measured on the 384-image batch against the untrimmed run: empty masks 35 → 18, none of the images that
-already worked became empty, every EIX unchanged, mean output size change 0.04% (max 3.1%), batch time
-+7%. The 18 left are about 9 real no-subject or tiny-product cases (below `MASK_MIN_COVERAGE`) and 9
-products the 384 model still misses.
 
 ### Why classification is optional
 
@@ -108,10 +104,8 @@ it — that is expected, not drift.
 | Module | Surface |
 |---|---|
 | `core` | `process_file(input, output) -> Result<(), String>` |
-| `core::config` | `JPEG_QUALITY`, `WORKING_SIZE`, `GATE_MARGIN_PX`, `REFINE_BAND_PX`, `REFINE_SAFETY_PX`, `REFINE_CONTEXT_PX`, `TRIM_*` |
-| `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare` |
-| `core::preprocessor::optimizer` | `optimize` |
-| `core::preprocessor::trim` | `plan`, `crop_view`, `cut_sides`, `grow`, `paste_back` |
+| `core::config` | `JPEG_QUALITY`, `WORKING_SIZE`, `GATE_MARGIN_PX`, `REFINE_BAND_PX`, `REFINE_SAFETY_PX`, `REFINE_CONTEXT_PX` |
+| `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare`; `optimizer::optimize` |
 | `core::processor::routes` | `Route`, `Route::select`, `dispatch` |
 | `core::processor::routes::{center_and_stretch, crop_square, fallback}` | `apply` |
 | `core::exporter` | `export`, `ShotInputs`, `shot_tags`; `colors::sample` (BGC/FGC); `save::save_jpeg_srgb`, `icc::srgb_profile` |
@@ -136,7 +130,7 @@ same one `Route::select` routed on; `BGC`/`FGC` are the dominant background / we
 foreground colours, each emitted only when sampleable. `=` stands in for the spec's `:` (illegal in
 Windows filenames). `EIX` comes from `shot_classifier::shotcode::eix_bits`; `BGC`/`FGC` are sampled
 once, by `exporter::colors`, from the true-colour `working` copy and the mask — never from
-`model_input()`. The `run_dir` dev harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
+`model_input`. The `run_dir` dev harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
 the name carries `EIX=____` and no segmask is written.
 
 `ShotClassification::mask_too_small` flags a mask that covers too little of the frame to be a
@@ -283,8 +277,7 @@ What each container now says:
   failure), the desktop folder bootstrap, and `batch::run`'s rayon fan-out with its one level of
   subfolder recursion mirrored into `PPRONI-OUTPUT` and `PPRONI-BACKUP`.
 - **Preprocessor** — decode + EXIF, the unconditional alpha flatten onto white, the sRGB branch,
-  and `Prepared { original, working, optimized }`, plus the backdrop trim (`preprocessor::trim`) that
-  picks the crop the model sees.
+  the optimiser (colour balance, then the trim crop), and `Prepared { original, working, model_input, crop }`.
 - **Shot Classifier** — segmentation, pass-1 `gate`, pass-2 `refine_edge`, the graze test, and the
   `ShotClassification` + `Mask` that leaves for the Processor. The no-verdict `None` is a node of
   its own, because it is not the same thing as an empty edge list.

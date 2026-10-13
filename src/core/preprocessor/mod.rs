@@ -4,10 +4,9 @@
 //!
 //! **preprocess (homogenize)** — flatten any alpha onto white, colour-manage into sRGB, and produce
 //! the working-resolution copy. Everything downstream sees one shape: opaque sRGB pixels at two
-//! resolutions, no alpha channel and no unknown colour space. A third image, `model_input()`, is the
-//! working copy run through the colour optimiser (or `working` itself when that changes nothing) —
-//! it exists only to be shown to the model. The model then sees only the part of it that is not empty
-//! backdrop (`trim`), chosen by `core::classify` from this same image.
+//! resolutions, no alpha channel and no unknown colour space. A third image, `model_input`, is the
+//! working copy run through the optimiser (colour balance, then a crop around the product) — it
+//! exists only to be shown to the model, and `crop` says where it was cut from `working`.
 //!
 //! Both resolutions are kept because the shot classifier needs both: the segmentation model runs on
 //! `working`, and its pass-2 refinement re-decides the boundary against full-resolution pixels in
@@ -15,9 +14,9 @@
 //! reduces the refinement to a no-op.
 
 pub mod optimizer;
-pub mod trim;
 
 use super::config::WORKING_SIZE;
+use super::shot_classifier::geometry::Rect;
 use super::trace;
 use image::{DynamicImage, ImageReader, RgbImage};
 use std::path::Path;
@@ -36,24 +35,18 @@ pub struct Prepared {
     /// Full resolution, sRGB, EXIF-applied, alpha flattened onto white.
     pub original: RgbImage,
     /// The same image with its longest side reduced to `config::WORKING_SIZE` (never upscaled).
-    /// True colour — the colour optimiser never touches it.
+    /// True colour — the optimiser never touches it.
     pub working: RgbImage,
-    /// `working` after the colour optimiser, or `None` when the optimiser had nothing to change.
-    /// Read it through [`Prepared::model_input`].
-    pub optimized: Option<RgbImage>,
-}
-
-impl Prepared {
-    /// The image BiRefNet sees: the optimised copy, or `working` itself when the optimiser changed
-    /// nothing.
-    pub fn model_input(&self) -> &RgbImage {
-        self.optimized.as_ref().unwrap_or(&self.working)
-    }
+    /// The image BiRefNet sees: `working` after the optimiser (colour balance, then cropped to the
+    /// product and its margin).
+    pub model_input: RgbImage,
+    /// Where `model_input` was cut from, in `working` coordinates.
+    pub crop: Rect,
 }
 
 /// Load and homogenize in one call — what the pipeline uses.
 pub fn prepare(path: &Path) -> Result<Prepared, String> {
-    Ok(preprocess(load(path)?))
+    preprocess(load(path)?)
 }
 
 /// Decode `path`, apply its EXIF orientation, and keep its ICC profile for the sRGB conversion.
@@ -74,8 +67,11 @@ pub fn load(path: &Path) -> Result<Decoded, String> {
     Ok(Decoded { image, icc_profile })
 }
 
-/// Flatten alpha onto white, colour-manage into sRGB, and derive the working-resolution copy.
-pub fn preprocess(decoded: Decoded) -> Prepared {
+/// Flatten alpha onto white, colour-manage into sRGB, and derive the working-resolution copy and the
+/// optimised crop the model sees.
+///
+/// `Err` when the optimiser finds nothing but backdrop: the image is not processed.
+pub fn preprocess(decoded: Decoded) -> Result<Prepared, String> {
     let mut original = flatten_onto_white(&decoded.image);
     trace::image(trace::stage::ORIGINAL, "original: decoded, EXIF-rotated, alpha flattened on white", || original.clone());
 
@@ -92,13 +88,13 @@ pub fn preprocess(decoded: Decoded) -> Prepared {
     let working = downscale_to_working(&original);
     trace::image(trace::stage::WORKING, "working copy (longest side reduced for the model)", || working.clone());
 
-    // Enhance a copy of the working image's colour so the segmentation model finds the subject more
-    // reliably. `working` and `original` stay true-colour: the exporter composes from `original` and
-    // samples BGC/FGC from `working`.
-    let optimized = optimizer::optimize(&working);
-    let prep = Prepared { original, working, optimized };
-    trace::image(trace::stage::OPTIMIZED, "working copy after the colour optimiser (what BiRefNet sees)", || prep.model_input().clone());
-    prep
+    // Colour-balance a copy of the working image and crop it to the product, so the segmentation
+    // model finds the subject more reliably. `working` and `original` stay true-colour: the exporter
+    // composes from `original` and samples BGC/FGC from `working`.
+    let (model_input, crop) = optimizer::optimize(&working)?;
+    trace::image(trace::stage::OPTIMIZED, "working copy after the optimiser: colour balance, cropped to the product (what BiRefNet sees)", || model_input.clone());
+    trace::note(|| format!("optimiser crop {crop:?} of the {}x{} working copy", working.width(), working.height()));
+    Ok(Prepared { original, working, model_input, crop })
 }
 
 // Composite onto white so transparent pixels become white pixels. The alpha channel is not carried
@@ -175,29 +171,33 @@ mod tests {
     use image::{DynamicImage, Rgb};
 
     /// The optimiser feeds the model only: `working` keeps the image's true colours, so BGC/FGC
-    /// sampled from it describe the original.
+    /// sampled from it describe the original. The model sees the balanced crop around the product.
     #[test]
     fn working_stays_true_colour_and_only_model_input_is_optimised() {
-        // A low-contrast image the optimiser will certainly change.
-        let mut img = RgbImage::from_pixel(32, 32, Rgb([120, 120, 120]));
-        img.put_pixel(0, 0, Rgb([100, 100, 100]));
-        img.put_pixel(1, 0, Rgb([140, 140, 140]));
+        let mut img = RgbImage::from_pixel(100, 100, Rgb([200, 200, 200]));
+        for y in 35..65 {
+            for x in 35..65 {
+                img.put_pixel(x, y, Rgb([60, 60, 60]));
+            }
+        }
 
-        let prep = preprocess(Decoded { image: DynamicImage::ImageRgb8(img.clone()), icc_profile: None });
+        let prep = preprocess(Decoded { image: DynamicImage::ImageRgb8(img.clone()), icc_profile: None }).unwrap();
 
         assert_eq!(prep.working, img, "working must be the untouched (here: not even resized) image");
-        assert_ne!(prep.model_input(), &prep.working, "model_input must be the optimised copy");
+        // A 30x30 product: the margin is the 10 px floor on every side.
+        assert_eq!(prep.crop, Rect { x: 25, y: 25, w: 50, h: 50 });
+        assert_eq!(prep.model_input.dimensions(), (50, 50));
+        assert_ne!(
+            prep.model_input.get_pixel(0, 0),
+            prep.working.get_pixel(25, 25),
+            "model_input must be the colour-balanced copy"
+        );
     }
 
-    /// When the optimiser has nothing to change, the model is shown `working` itself: no copy.
+    /// A frame with nothing but backdrop is refused, so the batch leaves the file where it is.
     #[test]
-    fn an_unchanged_image_is_shown_to_the_model_as_working_itself() {
-        let mut img = RgbImage::new(32, 32);
-        for (i, px) in img.pixels_mut().enumerate() {
-            *px = if i % 2 == 0 { Rgb([0, 0, 0]) } else { Rgb([255, 255, 255]) };
-        }
-        let prep = preprocess(Decoded { image: DynamicImage::ImageRgb8(img), icc_profile: None });
-        assert!(prep.optimized.is_none());
-        assert!(std::ptr::eq(prep.model_input(), &prep.working));
+    fn a_blank_image_is_an_error() {
+        let img = RgbImage::from_pixel(64, 64, Rgb([240, 240, 240]));
+        assert!(preprocess(Decoded { image: DynamicImage::ImageRgb8(img), icc_profile: None }).is_err());
     }
 }

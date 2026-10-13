@@ -36,7 +36,7 @@ use super::trace;
 pub use birefnet::{BiRefNetConfig, BiRefNetModel};
 pub use geometry::Edge;
 pub use refine::{EdgeRefinement, RefineParams, RefinementInput};
-pub use segmentation::{Instance, Mask, SegmentationModel};
+pub use segmentation::{CroppedModel, Instance, Mask, SegmentationModel};
 
 /// Full verdict for one detected instance: which edges, if any, it
 /// actually touches, and whether the mask behind that answer is worth
