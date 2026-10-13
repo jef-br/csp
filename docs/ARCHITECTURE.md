@@ -53,6 +53,26 @@ against full-resolution pixels in `original`, because the mask it produced is up
 pixel-accurate at the edge. Hand the classifier the same image twice and the scale between them
 collapses to 1.0, the refinement ring shrinks to its floor, and pass 2 stops doing anything.
 
+### Backdrop trim
+
+BiRefNet at 384px sometimes returns an empty mask for a product that sits small in a large empty
+frame, and finds it once the frame is tightened around it. `core::classify` therefore runs the model on
+a crop of `model_input()` chosen by `preprocessor::trim`, in three steps: trim away what matches the
+four corner colours (this removes false edges, such as white side bars), trim again against every
+colour on the edge of that result (with a tolerance for noise and soft light), then grow the box back
+out by 10-20% of its size (more when more was trimmed) so the edge verdict cannot change.
+
+The model's mask is pasted back into the full frame, zero outside the crop, so the gate, refinement,
+routing and exporter see a normal mask. Every way the trim can go wrong ends in the plain pass on the
+whole frame: the trimmed pass is empty, the model fails, or the mask runs into a crop edge that is not
+the image edge (the trim cut into the product, as with a white garment on white). In that last case
+the crop is first widened on that side, up to twice. The constants are `config::TRIM_*`.
+
+Measured on the 384-image batch against the untrimmed run: empty masks 35 → 18, none of the images that
+already worked became empty, every EIX unchanged, mean output size change 0.04% (max 3.1%), batch time
++7%. The 18 left are about 9 real no-subject or tiny-product cases (below `MASK_MIN_COVERAGE`) and 9
+products the 384 model still misses.
+
 ### Why classification is optional
 
 `classify` returns `Option`. `None` means *no verdict* — the model is unavailable, or inference
@@ -88,8 +108,10 @@ it — that is expected, not drift.
 | Module | Surface |
 |---|---|
 | `core` | `process_file(input, output) -> Result<(), String>` |
-| `core::config` | `JPEG_QUALITY`, `WORKING_SIZE`, `GATE_MARGIN_PX`, `REFINE_BAND_PX`, `REFINE_SAFETY_PX`, `REFINE_CONTEXT_PX` |
+| `core::config` | `JPEG_QUALITY`, `WORKING_SIZE`, `GATE_MARGIN_PX`, `REFINE_BAND_PX`, `REFINE_SAFETY_PX`, `REFINE_CONTEXT_PX`, `TRIM_*` |
 | `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare` |
+| `core::preprocessor::optimizer` | `optimize` |
+| `core::preprocessor::trim` | `plan`, `crop_view`, `cut_sides`, `grow`, `paste_back` |
 | `core::processor::routes` | `Route`, `Route::select`, `dispatch` |
 | `core::processor::routes::{center_and_stretch, crop_square, fallback}` | `apply` |
 | `core::exporter` | `export`, `ShotInputs`, `shot_tags`; `colors::sample` (BGC/FGC); `save::save_jpeg_srgb`, `icc::srgb_profile` |
@@ -261,7 +283,8 @@ What each container now says:
   failure), the desktop folder bootstrap, and `batch::run`'s rayon fan-out with its one level of
   subfolder recursion mirrored into `PPRONI-OUTPUT` and `PPRONI-BACKUP`.
 - **Preprocessor** — decode + EXIF, the unconditional alpha flatten onto white, the sRGB branch,
-  and `Prepared { original, working, optimized }`.
+  and `Prepared { original, working, optimized }`, plus the backdrop trim (`preprocessor::trim`) that
+  picks the crop the model sees.
 - **Shot Classifier** — segmentation, pass-1 `gate`, pass-2 `refine_edge`, the graze test, and the
   `ShotClassification` + `Mask` that leaves for the Processor. The no-verdict `None` is a node of
   its own, because it is not the same thing as an empty edge list.

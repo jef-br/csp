@@ -35,6 +35,8 @@ pub mod stage {
     pub const WORKING: u8 = 3;
     /// The working copy after the colour optimiser — what BiRefNet actually sees.
     pub const OPTIMIZED: u8 = 4;
+    /// The backdrop trim: the crop box drawn on the optimised image. Only written when a trim applies.
+    pub const TRIM: u8 = 5;
 
     /// The primary BiRefNet model: seven stages, `PRIMARY + 0..=6` (see [`super::MODEL_STEPS`]).
     pub const PRIMARY: u8 = 10;

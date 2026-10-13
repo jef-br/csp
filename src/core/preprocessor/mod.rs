@@ -6,7 +6,8 @@
 //! the working-resolution copy. Everything downstream sees one shape: opaque sRGB pixels at two
 //! resolutions, no alpha channel and no unknown colour space. A third image, `model_input()`, is the
 //! working copy run through the colour optimiser (or `working` itself when that changes nothing) —
-//! it exists only to be shown to the model.
+//! it exists only to be shown to the model. The model then sees only the part of it that is not empty
+//! backdrop (`trim`), chosen by `core::classify` from this same image.
 //!
 //! Both resolutions are kept because the shot classifier needs both: the segmentation model runs on
 //! `working`, and its pass-2 refinement re-decides the boundary against full-resolution pixels in
@@ -14,6 +15,7 @@
 //! reduces the refinement to a no-op.
 
 pub mod optimizer;
+pub mod trim;
 
 use super::config::WORKING_SIZE;
 use super::trace;

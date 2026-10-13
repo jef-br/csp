@@ -47,6 +47,49 @@ pub const GRAZE_RATIO_MAX: f32 = 0.80;
 /// them, so the exact value barely matters.
 pub const MASK_MIN_COVERAGE: f64 = 0.05;
 
+// ---- Backdrop trim ----------------------------------------------------------------------------
+//
+// Before BiRefNet sees an image, the empty backdrop around the product is cropped away
+// (`preprocessor::trim`), so the product fills more of what the 384px model looks at. Measured on the
+// 384-image batch against the untrimmed run: 17 of 35 empty masks became real masks, none of the
+// images that already worked became empty, and every edge verdict (EIX) was unchanged.
+
+/// Trim step 1: per-channel distance from a corner colour within which a pixel counts as that backdrop.
+pub const TRIM_CORNER_TOL: i32 = 10;
+
+/// Trim step 2: the same tolerance, in buckets of 4 colour levels, around every colour found on the
+/// edge of the step-1 result. It absorbs noise and soft lighting.
+pub const TRIM_EDGE_TOL_BUCKETS: i32 = 1;
+
+/// Trim step 2: an edge pixel only counts as backdrop if it is within this per-channel distance of the
+/// median edge colour. Keeps a product that touches the edge from being learned as backdrop.
+pub const TRIM_EDGE_SPREAD: i32 = 40;
+
+/// Share of a row or column that may be non-backdrop and still be trimmed away (stray noise pixels).
+pub const TRIM_OUTLIER: f32 = 0.003;
+
+/// Trim step 3: the box is grown back out by a margin of its own size, so the edge verdict (EIX) cannot
+/// change. The margin runs from `TRIM_MARGIN_MIN` when little was trimmed to `TRIM_MARGIN_MAX` when
+/// nearly everything was.
+pub const TRIM_MARGIN_MIN: f32 = 0.10;
+pub const TRIM_MARGIN_MAX: f32 = 0.20;
+
+/// A trim leaving less than this share of the frame, or a side shorter than `TRIM_MIN_SIDE` pixels, is
+/// not trusted (the product was probably mistaken for backdrop) and the whole frame is used instead.
+pub const TRIM_MIN_AREA: f32 = 0.02;
+pub const TRIM_MIN_SIDE: u32 = 24;
+
+/// Truncation guard. A mask that runs into a crop edge which is not the image edge may continue past
+/// it (a white garment on a white backdrop, trimmed too tight). "Runs into" = at least
+/// `TRIM_CUT_FRACTION` of that edge's length is mask, within `TRIM_CUT_BAND_PX` of it.
+pub const TRIM_CUT_BAND_PX: u32 = 3;
+pub const TRIM_CUT_FRACTION: f32 = 0.03;
+
+/// A truncated side is grown by this share of the crop's size and the model run again, at most
+/// `TRIM_GROW_ROUNDS` times; if the mask still runs into the cut, the untrimmed result is used.
+pub const TRIM_GROW: f32 = 0.25;
+pub const TRIM_GROW_ROUNDS: u32 = 2;
+
 /// Pass-2 safety margin excluded around the mask when sampling background colour.
 pub const REFINE_SAFETY_PX: u32 = 10;
 

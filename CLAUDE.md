@@ -1,5 +1,6 @@
 # CLAUDE.md
 Project notes for any Claude session working in this repo.
+**Read `docs/WORK_STATE.md` first:** what is decided, rejected and still open.
 
 ## Layout
 One crate, one `src/` tree.
