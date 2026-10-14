@@ -47,11 +47,11 @@ pub mod stage {
 /// and 6 are no longer traced; the empty strings keep the array indexable by the raw offsets.
 pub const MODEL_STEPS: [&str; 7] = [
     "",
-    "model input after ImageNet normalisation (the optimiser pre-balances so this reads naturally)",
-    "raw model output (logits, stretched)",
+    "Model input (the preprocessor handles color-balancing and trims to the vicinity of the expected bbox)",
+    "Raw model output (logits, stretched)",
     "",
     "",
-    "mask resampled to working resolution (what the rest of the pipeline uses)",
+    "Mask resampled to working resolution (what the rest of the pipeline uses)",
     "",
 ];
 

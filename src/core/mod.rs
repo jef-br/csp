@@ -21,13 +21,23 @@ pub fn process_file(input: &Path, output: &Path, backup: &Path) -> Result<(), St
         .as_ref()
         .map(|(class, mask)| processor::routes::Shot { class, mask });
     let route = processor::routes::Route::select(shot.as_ref().map(|s| s.class));
-    trace_stage_90(&prep, shot.as_ref(), route);
+    // Sample BGC/FGC once per image (when debug is on). Shared by the stage-90 log line and the
+    // exporter's filename tag: `prep.working` is immutable, the mask is the same both times, and
+    // `colors::sample` is a pure read, so one measurement serves both sites.
+    let colors = (trace::debug_enabled())
+        .then(|| shot.as_ref().map(|s| exporter::colors::sample(&prep.working, s.mask)))
+        .flatten();
+    trace_stage_90(&prep, shot.as_ref(), route, colors.as_ref());
     let img = processor::routes::dispatch(&prep, shot);
-    let shot = classified.as_ref().map(|(class, mask)| exporter::ShotInputs {
-        working: &prep.working,
-        mask,
-        class,
-    });
+    let shot = classified
+        .as_ref()
+        .zip(colors.as_ref())
+        .map(|((class, mask), colors)| exporter::ShotInputs {
+            working: &prep.working,
+            mask,
+            class,
+            colors,
+        });
     exporter::export(&img, output, input, backup, shot)
 }
 
@@ -94,6 +104,7 @@ fn trace_stage_90(
     prep: &Prepared,
     shot: Option<&processor::routes::Shot<'_>>,
     route: processor::routes::Route,
+    colors: Option<&exporter::colors::ShotColors>,
 ) {
     use processor::routes::center_and_stretch::plan::{Pins, SquarePlan};
     use processor::routes::Route;
@@ -146,19 +157,16 @@ fn trace_stage_90(
         trace::note(move || l2);
     }
 
-    // Line 3: shot code. EIX is always known; BGC/FGC only when a verdict and a mask were produced.
-    let (eix, colors) = match shot {
-        Some(s) => (
-            eix_bits(&s.class.touches_edges),
-            Some(exporter::colors::sample(&prep.working, s.mask)),
-        ),
-        None => (NO_VERDICT_EIX.to_owned(), None),
-    };
+    // Line 3: shot code. EIX is always known; BGC/FGC come from the one sample taken in
+    // `process_file` and shared with the exporter's filename tag.
+    let eix = shot
+        .map(|s| eix_bits(&s.class.touches_edges))
+        .unwrap_or_else(|| NO_VERDICT_EIX.to_owned());
     let mut l3 = format!("EIX={eix}");
-    if let Some(c) = colors.as_ref().and_then(|c| c.bgc.as_ref()) {
+    if let Some(c) = colors.and_then(|c| c.bgc.as_ref()) {
         l3.push_str(&format!("  BGC={c}"));
     }
-    if let Some(c) = colors.as_ref().and_then(|c| c.fgc.as_ref()) {
+    if let Some(c) = colors.and_then(|c| c.fgc.as_ref()) {
         l3.push_str(&format!("  FGC={c}"));
     }
     trace::note(move || l3);

@@ -32,6 +32,7 @@ use super::config;
 use super::trace;
 use super::shot_classifier::shotcode::{eix_bits, NO_VERDICT_EIX};
 use super::shot_classifier::{Mask, ShotClassification};
+use colors::ShotColors;
 use image::{GrayImage, RgbImage};
 use std::path::Path;
 
@@ -44,6 +45,9 @@ pub struct ShotInputs<'a> {
     pub mask: &'a Mask,
     /// The edge verdict.
     pub class: &'a ShotClassification,
+    /// BGC/FGC sampled in `core::process_file` so the trace log and the filename tag share one
+    /// measurement instead of calling `colors::sample` twice per image.
+    pub colors: &'a ShotColors,
 }
 
 pub fn export(
@@ -89,12 +93,12 @@ fn tags_enabled() -> bool {
 /// `--` separates the stem from the tags and each tag from the next; `=` stands in for the spec's
 /// `:` (illegal in Windows filenames).
 pub fn shot_tags(shot: &ShotInputs<'_>) -> String {
-    tags(&eix_bits(&shot.class.touches_edges), &colors::sample(shot.working, shot.mask))
+    tags(&eix_bits(&shot.class.touches_edges), shot.colors)
 }
 
 /// Join an EIX string and the sampled colours into the tag string. A colour that was not found is
 /// left out.
-pub fn tags(eix: &str, colors: &colors::ShotColors) -> String {
+pub fn tags(eix: &str, colors: &ShotColors) -> String {
     let mut s = format!("--EIX={eix}");
     if let Some(c) = &colors.bgc {
         s.push_str("--BGC=");

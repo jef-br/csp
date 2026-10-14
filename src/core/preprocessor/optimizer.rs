@@ -29,7 +29,10 @@
 //! image it is given: the full-resolution `original` the exporter composes from, and the
 //! true-colour `working` the exporter samples BGC/FGC from, are never touched.
 
-use super::super::config::{TRIM_CLOSE_K, TRIM_MARGIN_MIN_PX, TRIM_MARGIN_SHARE, TRIM_SAMPLES_PER_EDGE};
+use super::super::config::{
+    TRIM_CLOSE_K, TRIM_MARGIN_MIN_PX, TRIM_MARGIN_SHARE, TRIM_MIN_KEEP, TRIM_OUTLIER_FLOOR,
+    TRIM_OUTLIER_K, TRIM_SAMPLES_PER_EDGE,
+};
 use super::super::shot_classifier::geometry::Rect;
 use image::{Rgb, RgbImage};
 
@@ -41,6 +44,8 @@ const LO_PERCENTILE: f64 = 0.68;
 const HI_PERCENTILE: f64 = 99.32;
 
 /// Count how many pixels hold each value 0-255 in channel `c` (0 = red, 1 = green, 2 = blue).
+/// Kept as a single-channel helper for the tests below; `shared_range` builds all three in one pass.
+#[cfg(test)]
 fn histogram(img: &RgbImage, c: usize) -> [u64; 256] {
     let mut hist = [0u64; 256];
     for px in img.pixels() {
@@ -103,7 +108,13 @@ fn cut_points(hist: &[u64; 256]) -> (u8, u8) {
 ///
 /// `None` when `hi` is not above `lo`: there is no range to spread, so the image is left alone.
 fn shared_range(img: &RgbImage) -> Option<(u8, u8)> {
-    let cuts = [0, 1, 2].map(|c| cut_points(&histogram(img, c)));
+    let mut hists = [[0u64; 256]; 3];
+    for px in img.pixels() {
+        hists[0][px[0] as usize] += 1;
+        hists[1][px[1] as usize] += 1;
+        hists[2][px[2] as usize] += 1;
+    }
+    let cuts = hists.map(|h| cut_points(&h));
     let lo = cuts.iter().map(|&(lo, _)| lo).min()?;
     let hi = cuts.iter().map(|&(_, hi)| hi).max()?;
     (hi > lo).then_some((lo, hi))
@@ -213,6 +224,45 @@ fn border_samples(img: &RgbImage) -> Vec<Rgb<u8>> {
     samples
 }
 
+/// Keep only the border samples whose colour sits near the per-channel median of the group.
+///
+/// A sample's L1 colour distance to the median (`|ΔR|+|ΔG|+|ΔB|`) is kept when it is at or below
+/// `TRIM_OUTLIER_FLOOR + TRIM_OUTLIER_K * MAD`, where MAD is the median of those 16 distances.
+/// The floor guards near-uniform edges from being shredded; the MAD term lets noisier edges keep a
+/// wider spread. `TRIM_MIN_KEEP` samples closest to the median are always kept, so a mostly-product
+/// edge can't collapse the backdrop range to one colour.
+///
+/// Protects `colour_range` on bleed-off shots, where a sampled corner can land on the product.
+fn drop_outliers(samples: &[Rgb<u8>]) -> Vec<Rgb<u8>> {
+    let median_channel = |c: usize| {
+        let mut v: Vec<u8> = samples.iter().map(|p| p[c]).collect();
+        v.sort_unstable();
+        v[v.len() / 2]
+    };
+    let med = [median_channel(0), median_channel(1), median_channel(2)];
+    let dist = |p: &Rgb<u8>| -> u32 {
+        (0..3).map(|c| p[c].abs_diff(med[c]) as u32).sum()
+    };
+    let dists: Vec<u32> = samples.iter().map(dist).collect();
+    let mad = {
+        let mut sorted = dists.clone();
+        sorted.sort_unstable();
+        sorted[sorted.len() / 2]
+    };
+    let threshold = TRIM_OUTLIER_FLOOR + (TRIM_OUTLIER_K * mad as f64).round() as u32;
+
+    let keep_rule: Vec<bool> = dists.iter().map(|&d| d <= threshold).collect();
+    if keep_rule.iter().filter(|&&k| k).count() >= TRIM_MIN_KEEP {
+        return samples.iter().zip(&keep_rule).filter_map(|(s, &k)| k.then_some(*s)).collect();
+    }
+
+    // Rule would drop too many: fall back to the TRIM_MIN_KEEP samples closest to the median.
+    let mut idx: Vec<usize> = (0..samples.len()).collect();
+    idx.sort_by_key(|&i| dists[i]);
+    idx.truncate(TRIM_MIN_KEEP);
+    idx.into_iter().map(|i| samples[i]).collect()
+}
+
 /// Per channel, the lowest and highest value over `samples`: `(lows, highs)`.
 fn colour_range(samples: &[Rgb<u8>]) -> ([u8; 3], [u8; 3]) {
     let mut lows = [255u8; 3];
@@ -233,35 +283,29 @@ fn colour_range(samples: &[Rgb<u8>]) -> ([u8; 3], [u8; 3]) {
 /// the same as closing the backdrop with a square window of that size. Anything thinner is treated
 /// as backdrop, and so is everything outside the frame. The box spans every such block.
 ///
-/// A block is found with a table of running totals, so each block costs four reads whatever `k` is.
+/// `TRIM_CLOSE_K` is fixed at 2, so each block is probed as its four corners directly — no
+/// summed-area table, no auxiliary allocation.
 fn product_box(img: &RgbImage) -> Option<Rect> {
+    const _: () = assert!(TRIM_CLOSE_K == 2, "product_box's 2x2 probe assumes TRIM_CLOSE_K == 2");
+
     let (w, h) = img.dimensions();
     let k = TRIM_CLOSE_K;
     if w < k || h < k {
         return None;
     }
-    let (lows, highs) = colour_range(&border_samples(img));
-    let is_product = |px: &Rgb<u8>| (0..3).any(|c| px[c] < lows[c] || px[c] > highs[c]);
-
-    // totals[y][x] = number of product pixels in the rectangle [0, x) x [0, y).
-    let stride = w as usize + 1;
-    let mut totals = vec![0u32; stride * (h as usize + 1)];
-    for y in 0..h as usize {
-        let mut row = 0u32;
-        for x in 0..w as usize {
-            row += is_product(img.get_pixel(x as u32, y as u32)) as u32;
-            totals[(y + 1) * stride + x + 1] = totals[y * stride + x + 1] + row;
-        }
-    }
-    let count = |x: u32, y: u32| {
-        let (x, y, k) = (x as usize, y as usize, k as usize);
-        totals[(y + k) * stride + x + k] + totals[y * stride + x] - totals[y * stride + x + k] - totals[(y + k) * stride + x]
+    let (lows, highs) = colour_range(&drop_outliers(&border_samples(img)));
+    let is_product = |x: u32, y: u32| {
+        let px = img.get_pixel(x, y);
+        (0..3).any(|c| px[c] < lows[c] || px[c] > highs[c])
+    };
+    let block_is_product = |x: u32, y: u32| {
+        is_product(x, y) && is_product(x + 1, y) && is_product(x, y + 1) && is_product(x + 1, y + 1)
     };
 
     let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
     for y in 0..=h - k {
         for x in 0..=w - k {
-            if count(x, y) == k * k {
+            if block_is_product(x, y) {
                 x0 = x0.min(x);
                 y0 = y0.min(y);
                 x1 = x1.max(x + k - 1);

@@ -54,8 +54,18 @@ pub const MASK_MIN_COVERAGE: f64 = 0.05;
 
 /// Backdrop samples taken along each edge of the frame, evenly spaced from the edge's start
 /// (4 gives 0%, 25%, 50% and 75%; 100% is the next edge's 0%). The lowest and highest value of every
-/// colour channel over all of them is the colour range that counts as backdrop.
+/// colour channel over all the kept samples is the colour range that counts as backdrop.
 pub const TRIM_SAMPLES_PER_EDGE: u32 = 4;
+
+/// Outlier drop on the border samples. A sample is kept when its L1 colour distance to the
+/// per-channel median of the 16 samples (`|ΔR|+|ΔG|+|ΔB|`, so 0 to 765) stays at or below
+/// `TRIM_OUTLIER_FLOOR + TRIM_OUTLIER_K * MAD`, where MAD is the median of those distances. The
+/// floor is a fixed safety band around the median so a near-uniform edge is not shredded; the
+/// MAD-scaled term grows the band on noisy edges. `TRIM_MIN_KEEP` samples are always kept — the
+/// ones closest to the median — so a mostly-product edge cannot collapse the backdrop range.
+pub const TRIM_OUTLIER_FLOOR: u32 = 120;
+pub const TRIM_OUTLIER_K: f64 = 1.5;
+pub const TRIM_MIN_KEEP: usize = 4;
 
 /// A pixel outside the backdrop range only counts as product when it sits inside a block of this
 /// many pixels per side that is entirely outside it. Smaller specks and thinner lines are treated as
