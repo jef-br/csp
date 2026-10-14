@@ -25,7 +25,6 @@ pub mod fallback;
 
 use super::super::preprocessor::Prepared;
 use crate::core::shot_classifier::{geometry::Rect, Edge, Mask, ShotClassification};
-use crate::core::trace;
 use image::RgbImage;
 
 /// What the classifier produced for one image: the edge verdict, and the mask it was read from.
@@ -125,13 +124,6 @@ impl Route {
 /// Run the route the verdict selects.
 pub fn dispatch(prep: &Prepared, shot: Option<Shot<'_>>) -> RgbImage {
     let route = Route::select(shot.map(|s| s.class));
-    trace::note(|| match shot {
-        Some(s) => format!(
-            "route: {route:?} (mask_too_small = {}, touches {:?})",
-            s.class.mask_too_small, s.class.touches_edges
-        ),
-        None => format!("route: {route:?} (no verdict)"),
-    });
     let img = match (route, shot) {
         (Route::CenterAndStretch, Some(shot)) => center_and_stretch::apply(prep, shot),
         (Route::CropSquare, Some(shot)) => crop_square::apply(prep, shot),
@@ -140,7 +132,6 @@ pub fn dispatch(prep: &Prepared, shot: Option<Shot<'_>>) -> RgbImage {
         // plain `Shot` rather than an `Option`, and cannot be handed a state they can't serve.
         _ => fallback::apply(prep),
     };
-    trace::image(trace::stage::ROUTE_OUT, "route output, before the output size envelope", || img.clone());
     img
 }
 

@@ -138,6 +138,10 @@ subject. It is informational for the tag and never overrides `eix` — a tag mus
 intersection the pipeline didn't actually route on. It doesn't appear in the filename today;
 `run_dir`'s console output and `zzz_results.json` are where it's currently visible.
 
+The same marker also drives `core::trace`: when it is present, every image writes a per-stage
+trace (`<stem>  -  NN.jpg`, `<stem>  -  log.txt`) into the output image's folder, next to its
+`<stem>_segmask.jpg`. One switch for all debug output, debug and release alike.
+
 ### `core::shot_classifier` — the classifier
 
 One module per job. `SegmentationModel` keeps the gate/refine logic independent of the ONNX
@@ -181,8 +185,7 @@ edges blocked there is no background anywhere to stretch from.
 R3 has no spec row. It is the answer to "we don't know": nothing cropped, nothing scaled, so a wrong
 guess costs framing rather than pixels.
 
-**Status:** all three routes are implemented. Each carries the spec behaviours it owns in its
-module docstring.
+**Status:** all three routes are implemented. Spec behaviours are carried in their own module docstring.
 
 ---
 

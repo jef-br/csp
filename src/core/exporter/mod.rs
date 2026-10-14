@@ -34,7 +34,6 @@ use super::shot_classifier::shotcode::{eix_bits, NO_VERDICT_EIX};
 use super::shot_classifier::{Mask, ShotClassification};
 use image::{GrayImage, RgbImage};
 use std::path::Path;
-use std::sync::OnceLock;
 
 /// Everything the debug tags need from the classifier, threaded through from `core::process_file`.
 /// `None` at the call site means "no verdict".
@@ -54,13 +53,7 @@ pub fn export(
     backup: &Path,
     shot: Option<ShotInputs<'_>>,
 ) -> Result<(), String> {
-    trace::note(|| match &shot {
-        Some(s) => format!("shot code: {}", shot_tags(s)),
-        None => "shot code: no verdict (classifier failed on this image)".into(),
-    });
-
     let sized = resize::to_envelope(img);
-    trace::image(trace::stage::FINAL, "final image as saved (after the output size envelope)", || sized.clone());
 
     if tags_enabled() {
         write_tagged(&sized, dest, shot)?;
@@ -86,15 +79,9 @@ fn move_to_backup(source: &Path, backup: &Path) -> Result<(), String> {
 }
 
 /// A `CSP_DEBUG_TAGS` file next to the running executable turns on filename tagging and the
-/// per-image segmask. Read once.
+/// per-image segmask. The same marker drives [`trace`], so one function serves both.
 fn tags_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("CSP_DEBUG_TAGS")))
-            .is_some_and(|p| p.is_file())
-    })
+    trace::debug_enabled()
 }
 
 /// The filename tag string: `--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]`. EIX is the classifier's

@@ -14,7 +14,6 @@ use image::{Rgb, RgbImage};
 
 use super::plan::SquarePlan;
 use crate::core::shot_classifier::geometry::Rect;
-use crate::core::trace;
 
 /// Compose the square from `src`, stretching background outward wherever the square reaches past a
 /// border. `subject` is the subject's box in `src`'s coordinates; `safety` is how far outside it
@@ -44,8 +43,6 @@ pub fn compose(src: &RgbImage, plan: &SquarePlan, subject: Rect, safety: u32) ->
             mid.put_pixel(x as u32, ry, *px);
         }
     }
-
-    trace::image(trace::stage::R1_STRETCH, "R1 after the horizontal stretch (before the vertical one)", || mid.clone());
 
     // Pass 2: those rows become the square's full height. `mid` row 0 is original row `real.y`, so
     // the square's origin sits at `plan.y - real.y` in this pass's coordinates.

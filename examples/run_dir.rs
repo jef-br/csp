@@ -131,8 +131,10 @@ fn main() {
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("img");
 
-        // Debug trace (CSP_TRACE_DIR): every stage image this run produces, as `<stem>  -  NN.jpg`.
-        let _trace = csp::core::trace::begin(path);
+        // Debug trace (CSP_DEBUG_TAGS marker file next to run_dir.exe): every stage image this
+        // run produces, as `<stem>  -  NN.jpg`, written next to run_dir's output files.
+        let trace_target = output_dir.join(&file_name);
+        let _trace = csp::core::trace::begin(&trace_target);
 
         let image = match image::open(path) {
             Ok(img) => img.to_rgb8(),

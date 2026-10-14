@@ -160,8 +160,37 @@ pub fn optimize(img: &RgbImage) -> Result<(RgbImage, Rect), String> {
 
     let product = product_box(balanced).ok_or("nothing but backdrop: no product to find")?;
     let crop = square_crop(product, balanced.width(), balanced.height());
-    let cropped = image::imageops::crop_imm(balanced, crop.x, crop.y, crop.w, crop.h).to_image();
+    let mut cropped = image::imageops::crop_imm(balanced, crop.x, crop.y, crop.w, crop.h).to_image();
+    counter_balance_for_birefnet(&mut cropped);
     Ok((cropped, crop))
+}
+
+/// Pre-compress each channel so BiRefNet's ImageNet normalisation (`(x/255 − mean) / std` with
+/// `mean=[0.485, 0.456, 0.406]`, `std=[0.229, 0.224, 0.225]`) ends up at `pixel/255` instead of
+/// the usual roughly `[-2, +3]` range. In other words, the model's own first step undoes this.
+///
+/// Formula (whole-pixel in, whole-pixel out):
+/// * R' = pixel · 0.229 + 123.675
+/// * G' = pixel · 0.224 + 116.28
+/// * B' = pixel · 0.225 + 103.53
+///
+/// Applied only to the cropped copy BiRefNet reads; `working` and `original` are untouched, so
+/// the exporter's BGC/FGC sampling is unaffected.
+fn counter_balance_for_birefnet(img: &mut RgbImage) {
+    const MEAN_255: [f32; 3] = [123.675, 116.28, 103.53];
+    const STD: [f32; 3] = [0.229, 0.224, 0.225];
+    let tables: [[u8; 256]; 3] = [0, 1, 2].map(|c| {
+        let mut t = [0u8; 256];
+        for (x, out) in t.iter_mut().enumerate() {
+            *out = (x as f32 * STD[c] + MEAN_255[c]).round().clamp(0.0, 255.0) as u8;
+        }
+        t
+    });
+    for px in img.pixels_mut() {
+        px[0] = tables[0][px[0] as usize];
+        px[1] = tables[1][px[1] as usize];
+        px[2] = tables[2][px[2] as usize];
+    }
 }
 
 /// The border pixels that define the backdrop colour: `TRIM_SAMPLES_PER_EDGE` on each edge, going
@@ -289,7 +318,9 @@ fn span(start: u32, len: u32, side: u32, axis: u32) -> (u32, u32) {
 /// One pass over the pixels: all three channels read the same table.
 fn colour_balance(img: &RgbImage) -> Option<RgbImage> {
     let (lo, hi) = shared_range(img)?;
-    let table = build_table(lo, hi, gamma(lo, hi));
+    let g = gamma(lo, hi);
+    super::super::trace::note(|| format!("levels: lo={lo} hi={hi} gamma={g:.3}"));
+    let table = build_table(lo, hi, g);
     if table.iter().enumerate().all(|(x, &y)| y as usize == x) {
         return None;
     }

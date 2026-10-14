@@ -17,7 +17,7 @@ pub enum Edge {
 }
 
 impl Edge {
-    pub const ALL: [Edge; 4] = [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right];
+    pub const ALL: [Edge; 4] = [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left];
 }
 
 /// A read-only 2D grid of values addressed as `(x, y)`, `(0, 0)` at the

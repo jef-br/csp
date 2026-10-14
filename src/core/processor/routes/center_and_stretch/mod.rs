@@ -68,13 +68,6 @@ pub fn apply(prep: &Prepared, shot: Shot<'_>) -> RgbImage {
         trace::note(|| format!("R1: no square can respect the bled edges {pins:?}: using R3 framing"));
         return fallback::apply(prep);
     };
-    trace::image(trace::stage::R1_PLAN, "R1 plan: subject box (cyan), planned square (yellow), grey = area R1 must invent", || {
-        trace::plan_view(&prep.original, subject, plan.x, plan.y, plan.side)
-    });
-    trace::note(|| format!(
-        "R1: subject box {subject:?} (original pixels), square {}px at ({}, {}), overhang {:?}",
-        plan.side, plan.x, plan.y, plan.overhang(prep.original.width(), prep.original.height())
-    ));
     compose::compose(&prep.original, &plan, subject, safety_px(prep))
 }
 

@@ -182,7 +182,6 @@ impl SegmentationModel for BiRefNetModel {
         // Plain resize (no letterbox/padding) per BiRefNet's own
         // preprocessing, then ImageNet normalization.
         let resized = image::imageops::resize(image, in_w, in_h, FilterType::Triangle);
-        trace::image(self.trace_base, trace::MODEL_STEPS[0], || resized.clone());
         let mut chw = vec![0f32; 3 * (in_h * in_w) as usize];
         let plane = (in_h * in_w) as usize;
         for (i, px) in resized.pixels().enumerate() {
@@ -227,16 +226,8 @@ impl SegmentationModel for BiRefNetModel {
         // shared by every row: both were per-pixel work whose answer never
         // varied per pixel.
         trace::image(self.trace_base + 2, trace::MODEL_STEPS[2], || trace::stretched_gray(logit_data, in_w, in_h));
-        trace::image(self.trace_base + 3, trace::MODEL_STEPS[3], || {
-            let p: Vec<f32> = logit_data.iter().map(|&v| 1.0 / (1.0 + (-v).exp())).collect();
-            trace::unit_gray(&p, in_w, in_h)
-        });
         let (out_w, out_h) = (image.width(), image.height());
         let threshold = logit(self.config.mask_threshold);
-        trace::image(self.trace_base + 4, trace::MODEL_STEPS[4], || {
-            let on: Vec<f32> = logit_data.iter().map(|&v| if v > threshold { 1.0 } else { 0.0 }).collect();
-            trace::unit_gray(&on, in_w, in_h)
-        });
         let x_map: Vec<usize> = (0..out_w)
             .map(|ox| {
                 (((ox as f32 + 0.5) / out_w as f32 * in_w as f32) as usize)
@@ -258,7 +249,6 @@ impl SegmentationModel for BiRefNetModel {
         }
         let mask = Mask { width: out_w, height: out_h, data };
         trace::image(self.trace_base + 5, trace::MODEL_STEPS[5], || trace::mask_image(&mask));
-        trace::image(self.trace_base + 6, trace::MODEL_STEPS[6], || trace::tint(image, &mask));
 
         // No box/class from this model — report the full image as the
         // bbox so the gate/refine pipeline (which only reads the mask

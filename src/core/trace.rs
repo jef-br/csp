@@ -1,15 +1,13 @@
 //! Debug trace: save every intermediate image of a run, so a bad result can be followed back to the
 //! stage that caused it.
 //!
-//! Debug builds only. In a release build every function here is an empty stub, so the shipped exe
-//! carries none of this: no stage labels, no file writing, no environment variable name.
+//! **Turning it on.** The same marker the exporter looks for: a file named `CSP_DEBUG_TAGS` next
+//! to the running executable. One check per process, cached. With no marker, every function here
+//! is inert. Debug and release both honour it — same scope as the exporter's filename tags and
+//! `<stem>_segmask.jpg`.
 //!
-//! **Turning it on.** Set `CSP_TRACE_DIR` to a folder. With it unset (the normal case) nothing is
-//! written and the cost is one environment lookup per image. The folder is created if missing but
-//! never emptied here — emptying it is the launch task's job (`.vscode/tasks.json`), so a stray
-//! `cargo run` can't delete anything.
-//!
-//! **What gets written**, per image, flat in that folder:
+//! **What gets written**, per image, into the output image's folder (next to the exporter's
+//! `<stem>_segmask.jpg`):
 //! * `<stem>  -  <NN>.jpg` — one file per stage; `NN` comes from [`stage`]. Numbers are fixed per
 //!   stage, not counted per run, so `10` is the model input on every image and a skipped stage
 //!   leaves a gap rather than renumbering its neighbours.
@@ -24,61 +22,38 @@ use super::shot_classifier::geometry::Rect;
 use super::shot_classifier::{Edge, Mask};
 use image::{Rgb, RgbImage};
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// Stage numbers. A group takes a block of ten so a stage can be added without renumbering.
 pub mod stage {
     /// Decoded, EXIF-rotated, alpha flattened onto white. Full resolution.
     pub const ORIGINAL: u8 = 1;
-    /// After colour management into sRGB. Only written when the file carried an ICC profile.
-    pub const ORIGINAL_SRGB: u8 = 2;
-    /// The working-resolution copy the model runs on.
+    /// The working-resolution copy the model runs on. Kept for `examples/run_dir.rs`; the
+    /// pipeline no longer traces it.
     pub const WORKING: u8 = 3;
-    /// The working copy after the colour optimiser — what BiRefNet actually sees.
-    pub const OPTIMIZED: u8 = 4;
-
-    /// The primary BiRefNet model: seven stages, `PRIMARY + 0..=6` (see [`super::MODEL_STEPS`]).
+    /// The primary BiRefNet model: four stages — the model input (`PRIMARY + 0`), the ImageNet-
+    /// normalised input (`+1`), the raw logits (`+2`), and the mask at working resolution (`+5`).
+    /// Numbers kept so earlier offsets stay recognisable in the log.
     pub const PRIMARY: u8 = 10;
-    /// The fallback model, same seven stages. Only present when the primary found no subject.
-    pub const FALLBACK: u8 = 20;
 
-    /// Pass-1 gate: the border bands, red where foreground was found.
-    pub const GATE: u8 = 30;
-    /// Pass-2 refinement, one block per edge: `REFINE + 10 * slot + 0..=3`
-    /// (crop, upsampled mask, trimap, refined mask). Slots follow [`super::edge_slot`].
-    pub const REFINE: u8 = 40;
-    /// The edge verdict drawn on the working image.
-    pub const VERDICT: u8 = 80;
-
-    /// R1: the subject box and the square planned around it, drawn on the original.
+    /// Plan view on the original: subject box (cyan), R1's planned square (yellow), grey =
+    /// invented area, plus semi-transparent edge bars for the gate/verdict (red = touches,
+    /// orange = gated but cleared). Emitted for every image; both the subject and the square
+    /// are optional, so a missing verdict or an impossible plan still produces a useful picture.
     pub const R1_PLAN: u8 = 90;
-    /// R1: the picture after the horizontal stretch, before the vertical one.
-    pub const R1_STRETCH: u8 = 91;
-    /// Whatever the chosen route produced, before the output size envelope.
-    pub const ROUTE_OUT: u8 = 92;
-    /// The final image, as it is saved.
-    pub const FINAL: u8 = 99;
 }
 
-/// The seven stages of one BiRefNet run, as offsets from [`stage::PRIMARY`] or [`stage::FALLBACK`].
+/// Labels for the stages of one BiRefNet run, as offsets from [`stage::PRIMARY`]. Indices 3, 4
+/// and 6 are no longer traced; the empty strings keep the array indexable by the raw offsets.
 pub const MODEL_STEPS: [&str; 7] = [
-    "model input: working image squashed to the model's square",
-    "model input after ImageNet normalisation (stretched to be visible)",
+    "",
+    "model input after ImageNet normalisation (the optimiser pre-balances so this reads naturally)",
     "raw model output (logits, stretched)",
-    "after sigmoid: probability of subject, 0 black to 1 white",
-    "thresholded at the model's own resolution",
+    "",
+    "",
     "mask resampled to working resolution (what the rest of the pipeline uses)",
-    "that mask on the working image (everything outside it dimmed blue)",
+    "",
 ];
-
-/// Where an edge's refinement block starts: `stage::REFINE + 10 * edge_slot(edge)`.
-pub fn edge_slot(edge: Edge) -> u8 {
-    match edge {
-        Edge::Top => 0,
-        Edge::Bottom => 1,
-        Edge::Left => 2,
-        Edge::Right => 3,
-    }
-}
 
 /// The share of the frame a mask covers, as a percentage.
 pub fn coverage_pct(mask: &Mask) -> f64 {
@@ -90,11 +65,9 @@ pub fn coverage_pct(mask: &Mask) -> f64 {
 
 /// Held for the length of one image's run. Dropping it writes that image's `log.txt`.
 pub struct Session {
-    #[cfg(debug_assertions)]
     owns: bool,
 }
 
-#[cfg(debug_assertions)]
 mod live {
     use std::cell::RefCell;
     use std::path::PathBuf;
@@ -112,33 +85,38 @@ mod live {
     }
 }
 
-/// Start tracing one image. Inert unless `CSP_TRACE_DIR` is set (and always inert in release).
-pub fn begin(source: &Path) -> Session {
-    #[cfg(debug_assertions)]
-    {
-        let Some(dir) = std::env::var_os("CSP_TRACE_DIR") else {
-            return Session { owns: false };
-        };
-        let already = live::CURRENT.with(|c| c.borrow().is_some());
-        if already {
-            return Session { owns: false };
-        }
-        let dir = std::path::PathBuf::from(dir);
-        let _ = std::fs::create_dir_all(&dir);
-        let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_owned();
-        live::CURRENT.with(|c| *c.borrow_mut() = Some(live::State { dir, stem, log: Vec::new() }));
-        Session { owns: true }
+/// `true` when a `CSP_DEBUG_TAGS` file sits next to the running executable. One lookup per
+/// process, cached. The exporter's filename tags and the trace both read this.
+pub fn debug_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("CSP_DEBUG_TAGS")))
+            .is_some_and(|p| p.is_file())
+    })
+}
+
+/// Start tracing one image. Inert unless the `CSP_DEBUG_TAGS` marker is next to the exe. Stage
+/// images and `log.txt` are written into `output.parent()`, using `output`'s file stem — the same
+/// folder and stem the exporter uses for `<stem>_segmask.jpg`.
+pub fn begin(output: &Path) -> Session {
+    if !debug_enabled() {
+        return Session { owns: false };
     }
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = source;
-        Session {}
+    let already = live::CURRENT.with(|c| c.borrow().is_some());
+    if already {
+        return Session { owns: false };
     }
+    let dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&dir);
+    let stem = output.file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_owned();
+    live::CURRENT.with(|c| *c.borrow_mut() = Some(live::State { dir, stem, log: Vec::new() }));
+    Session { owns: true }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        #[cfg(debug_assertions)]
         if self.owns {
             if let Some(state) = live::CURRENT.with(|c| c.borrow_mut().take()) {
                 let path = state.dir.join(format!("{}  -  log.txt", state.stem));
@@ -152,19 +130,11 @@ impl Drop for Session {
 /// just to hand it to [`image`] or [`note`] — normally the closures make this unnecessary.
 #[allow(dead_code)]
 pub fn active() -> bool {
-    #[cfg(debug_assertions)]
-    {
-        live::CURRENT.with(|c| c.borrow().is_some())
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        false
-    }
+    live::CURRENT.with(|c| c.borrow().is_some())
 }
 
 /// Save one stage as `<stem>  -  <index>.jpg`. `make` runs only while tracing.
 pub fn image(index: u8, label: &str, make: impl FnOnce() -> RgbImage) {
-    #[cfg(debug_assertions)]
     live::CURRENT.with(|c| {
         // Take the state out while `make` runs: it may itself call back into this module.
         let Some(mut state) = c.borrow_mut().take() else { return };
@@ -180,15 +150,10 @@ pub fn image(index: u8, label: &str, make: impl FnOnce() -> RgbImage) {
         ));
         *c.borrow_mut() = Some(state);
     });
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = (index, label, make);
-    }
 }
 
 /// Add a line to this image's `log.txt`. `make` runs only while tracing.
 pub fn note(make: impl FnOnce() -> String) {
-    #[cfg(debug_assertions)]
     live::CURRENT.with(|c| {
         let text = {
             if c.borrow().is_none() {
@@ -200,29 +165,12 @@ pub fn note(make: impl FnOnce() -> String) {
             state.log.push(format!("      {text}"));
         }
     });
-    #[cfg(not(debug_assertions))]
-    {
-        let _ = make;
-    }
 }
 
 /// Which block a stage number belongs to, as a log prefix.
-#[cfg(debug_assertions)]
 fn group(index: u8) -> String {
     match index {
         10..=19 => "[primary model] ".into(),
-        20..=29 => "[fallback model] ".into(),
-        40..=79 => {
-            let edge = match (index - 40) / 10 {
-                0 => "Top",
-                1 => "Bottom",
-                2 => "Left",
-                _ => "Right",
-            };
-            let step = ["crop of the original", "mask upsampled into the crop", "trimap (white = subject, grey = unknown, black = background)", "refined mask"]
-                [((index - 40) % 10).min(3) as usize];
-            format!("[refine {edge}] {step}")
-        }
         _ => String::new(),
     }
 }
@@ -355,15 +303,29 @@ pub fn verdict_view(working: &RgbImage, mask: &Mask, near: &[Edge], touching: &[
     img
 }
 
-/// R1's plan on the original: the subject box (cyan) and the square cut around it (yellow). The
-/// square can reach past the picture, so the picture sits on a grey canvas padded to hold all of it
-/// — the grey is exactly the part R1 has to invent by stretching.
-pub fn plan_view(original: &RgbImage, subject: Rect, sq_x: i64, sq_y: i64, side: u32) -> RgbImage {
+/// Debug view on the original: subject box (cyan) and R1's planned square (yellow), on a grey
+/// canvas padded wherever the square reaches past the picture — the grey is exactly what R1 has
+/// to invent by stretching. Both are optional: a missing subject skips the cyan outline, a
+/// missing plan skips the yellow square and the grey padding. Semi-transparent red/orange bars
+/// along each gated edge sit under the outlines (red = subject touches, orange = gate flagged
+/// but refinement cleared).
+pub fn plan_view(
+    original: &RgbImage,
+    subject: Option<Rect>,
+    plan: Option<(i64, i64, u32)>,
+    gated: &[Edge],
+    touching: &[Edge],
+) -> RgbImage {
     let (w, h) = (original.width() as i64, original.height() as i64);
-    let pad_l = (-sq_x).max(0);
-    let pad_t = (-sq_y).max(0);
-    let pad_r = (sq_x + side as i64 - w).max(0);
-    let pad_b = (sq_y + side as i64 - h).max(0);
+    let (pad_l, pad_t, pad_r, pad_b) = match plan {
+        Some((sq_x, sq_y, side)) => (
+            (-sq_x).max(0),
+            (-sq_y).max(0),
+            (sq_x + side as i64 - w).max(0),
+            (sq_y + side as i64 - h).max(0),
+        ),
+        None => (0, 0, 0, 0),
+    };
 
     let mut canvas = RgbImage::from_pixel(
         (w + pad_l + pad_r) as u32,
@@ -373,7 +335,45 @@ pub fn plan_view(original: &RgbImage, subject: Rect, sq_x: i64, sq_y: i64, side:
     image::imageops::replace(&mut canvas, original, pad_l, pad_t);
 
     let thick = ((w.max(h) / 400).max(2)) as u32;
-    outline(&mut canvas, pad_l + subject.x as i64, pad_t + subject.y as i64, subject.w, subject.h, [0, 255, 255], thick);
-    outline(&mut canvas, pad_l + sq_x, pad_t + sq_y, side, side, [255, 255, 0], thick);
+    // Semi-transparent edge bars drawn first so the subject/square outlines sit above them.
+    overlay_edge_bars(&mut canvas, original.width(), original.height(), pad_l as u32, pad_t as u32, gated, touching);
+    if let Some(s) = subject {
+        outline(&mut canvas, pad_l + s.x as i64, pad_t + s.y as i64, s.w, s.h, [0, 255, 255], thick);
+    }
+    if let Some((sq_x, sq_y, side)) = plan {
+        outline(&mut canvas, pad_l + sq_x, pad_t + sq_y, side, side, [255, 255, 0], thick);
+    }
     canvas
+}
+
+/// Blends a bar colour at 50% alpha along each gated edge of the original-image region on
+/// `canvas` (the area at `(pad_x, pad_y) .. +(w, h)`). Red for an edge the subject touches,
+/// orange for one the gate flagged but refinement cleared.
+fn overlay_edge_bars(
+    canvas: &mut RgbImage,
+    w: u32,
+    h: u32,
+    pad_x: u32,
+    pad_y: u32,
+    gated: &[Edge],
+    touching: &[Edge],
+) {
+    let bar = (w.max(h) / 100).max(4);
+    for edge in gated {
+        let colour = if touching.contains(edge) { [255u8, 0, 0] } else { [255, 165, 0] };
+        let (x0, y0, bw, bh) = match edge {
+            Edge::Top => (0u32, 0u32, w, bar),
+            Edge::Bottom => (0, h.saturating_sub(bar), w, bar),
+            Edge::Left => (0, 0, bar, h),
+            Edge::Right => (w.saturating_sub(bar), 0, bar, h),
+        };
+        for py in y0..(y0 + bh).min(h) {
+            for px in x0..(x0 + bw).min(w) {
+                let dst = canvas.get_pixel_mut(pad_x + px, pad_y + py);
+                dst[0] = ((dst[0] as u16 + colour[0] as u16) / 2) as u8;
+                dst[1] = ((dst[1] as u16 + colour[1] as u16) / 2) as u8;
+                dst[2] = ((dst[2] as u16 + colour[2] as u16) / 2) as u8;
+            }
+        }
+    }
 }

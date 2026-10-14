@@ -80,19 +80,17 @@ pub fn preprocess(decoded: Decoded) -> Result<Prepared, String> {
     // untouched.
     if let Some(icc) = decoded.icc_profile.as_deref() {
         original = convert_to_srgb(original, icc);
-        trace::image(trace::stage::ORIGINAL_SRGB, "original after colour management into sRGB (file had an ICC profile)", || original.clone());
+        trace::note(|| "colour-managed into sRGB (file had an ICC profile)".into());
     } else {
         trace::note(|| "no ICC profile in the file: colours left as they are".into());
     }
 
     let working = downscale_to_working(&original);
-    trace::image(trace::stage::WORKING, "working copy (longest side reduced for the model)", || working.clone());
 
     // Colour-balance a copy of the working image and crop it to the product, so the segmentation
     // model finds the subject more reliably. `working` and `original` stay true-colour: the exporter
     // composes from `original` and samples BGC/FGC from `working`.
     let (model_input, crop) = optimizer::optimize(&working)?;
-    trace::image(trace::stage::OPTIMIZED, "working copy after the optimiser: colour balance, cropped to the product (what BiRefNet sees)", || model_input.clone());
     trace::note(|| format!("optimiser crop {crop:?} of the {}x{} working copy", working.width(), working.height()));
     Ok(Prepared { original, working, model_input, crop })
 }
