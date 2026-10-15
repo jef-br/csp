@@ -47,7 +47,7 @@ pub mod stage {
 /// and 6 are no longer traced; the empty strings keep the array indexable by the raw offsets.
 pub const MODEL_STEPS: [&str; 7] = [
     "",
-    "Model input (the preprocessor handles color-balancing and trims to the vicinity of the expected bbox)",
+    "Model input (Preproc color-balancing and trim applied to approximate bbox)",
     "Raw model output (logits, stretched)",
     "",
     "",
