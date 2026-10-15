@@ -1,11 +1,11 @@
 ---
 name: diagram-sync
 description: >
-  Keep CSP's docs/diagrams/*.drawio.svg diagrams (currently JBA2B, the
+  Keep Pproni's docs/diagrams/*.drawio.svg diagrams (currently JBA2B, the
   end-to-end App/Core flowchart) in sync with the code they document,
   and always read/edit them through their embedded mxGraph XML rather than
   as plain images. Use this whenever you add, rename, or remove a module,
-  struct, enum, or public function/method in CSP's Rust source — check
+  struct, enum, or public function/method in Pproni's Rust source — check
   whether it has a matching diagram node and patch it in the same commit.
   Also use this before opening, reading, or editing any .drawio.svg file
   directly, and whenever the user asks to check, sync, or reconcile the
@@ -15,7 +15,7 @@ description: >
 
 # Diagram sync
 
-CSP documents its architecture with draw.io diagrams under `docs/diagrams/`, referenced
+Pproni documents its architecture with draw.io diagrams under `docs/diagrams/`, referenced
 from `docs/ARCHITECTURE.md`. They are real SVGs — GitHub renders them as images — but
 each one also carries its full draw.io source embedded inside itself, so opening the
 same file in an editor drops you back into an editable diagram, not a dead picture.
@@ -24,7 +24,7 @@ attached, not a picture with metadata attached.
 
 **Current inventory — read this before assuming a diagram exists.** One file:
 `JBA2B.drawio.svg`, an end-to-end flowchart across four containers (App; Core, holding
-Preprocessor → Shot Classifier → Processor → Exporter; and a proposed CSP-Analyzer).
+Preprocessor → Shot Classifier → Processor → Exporter; and a proposed Pproni-Analyzer).
 The four topic diagrams this skill used to describe — `class-map`, `pipeline-flow`,
 `detection-internals`, `geometry-routing` — were deleted along with the classical
 detector they documented. Do not look for them, and do not treat their absence as
@@ -34,7 +34,7 @@ no longer exists.
 `JBA2B.drawio.svg` was rebuilt against the current code on 2026-09-09 and is in sync;
 the drift that used to be listed here — a Shot Classifier and Processor still describing
 the retired detector — is gone. `docs/ARCHITECTURE.md` §6 says what each container
-covers. It now has six containers, not four: the proposed CSP-Analyzer lane was replaced
+covers. It now has six containers, not four: the proposed Pproni-Analyzer lane was replaced
 by a dev-harness lane for `examples/run_dir.rs`.
 
 Two situations bring you here: **code changed** (does a diagram need a matching edit?)

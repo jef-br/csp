@@ -12,7 +12,7 @@ use std::path::PathBuf;
 fn main() {
     // A missing ONNX Runtime or model is an environment fault, not an image outcome: stop before
     // touching a single file rather than processing the whole batch with a dead classifier.
-    if let Err(e) = csp::core::preflight() {
+    if let Err(e) = pproni::core::preflight() {
         eprintln!("cannot start: {e}");
         std::process::exit(1);
     }

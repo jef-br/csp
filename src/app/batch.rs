@@ -5,7 +5,7 @@
 
 use super::i18n::Lang;
 use super::progress::Progress;
-use csp::core;
+use pproni::core;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};

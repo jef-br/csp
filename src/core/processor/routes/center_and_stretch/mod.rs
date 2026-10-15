@@ -11,7 +11,7 @@
 //! Everything else follows from that, per axis — an axis with a free side takes the margin, an axis
 //! blocked at both ends takes none, and the slack goes to whichever sides are free.
 //!
-//! That single rule reproduces four of the five bleed behaviours `docs/csp-spec.md` §5 lists
+//! That single rule reproduces four of the five bleed behaviours `docs/pproni-spec.md` §5 lists
 //! separately: flush to one edge, fill an axis bled at both ends, flush into a shared corner, fill
 //! the boxed-in axis. They were never five behaviours — they are one rule seen from four angles,
 //! which is why they live here rather than in five branches of [`super::crop_square`].

@@ -1,6 +1,6 @@
 # Diagrams
 
-WYSIWYG diagrams for CSP, edited as draw.io (diagrams.net) files — free, no account,
+WYSIWYG diagrams for Pproni, edited as draw.io (diagrams.net) files — free, no account,
 no server.
 
 ## One-time setup
@@ -49,7 +49,7 @@ to check the visual layout too — same file, no separate format needed for eith
 The protocol lives on `examples/run_dir.rs`, which currently writes two snapshots
 (`SEGMASK`, `REFINE`). `JBA2B.drawio.svg` is the only diagram in this folder, so every
 tagged Rectangle lives there. Out of scope for this protocol: the shipped exporter's
-`CSP_DEBUG_TAGS` outputs (`<stem>_segmask.jpg` and the stage trace
+`PPRONI_DEBUG_TAGS` outputs (`<stem>_segmask.jpg` and the stage trace
 `<stem>  -  NN.jpg`) each keep their own naming.
 
 `examples/run_dir.rs` (a dev-only harness, see its own doc comment) writes one

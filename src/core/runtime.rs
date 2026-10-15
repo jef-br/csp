@@ -1,6 +1,6 @@
 //! The ONNX Runtime shared library, carried inside the executable.
 //!
-//! CSP ships as one file. The BiRefNet weights are already compiled in
+//! Pproni ships as one file. The BiRefNet weights are already compiled in
 //! (`shot_classifier::birefnet`); this module does the same for
 //! `onnxruntime.dll`, the last file that used to sit beside the exe.
 //!
@@ -91,7 +91,7 @@ fn candidate_bases() -> Vec<PathBuf> {
 }
 
 /// Write to a uniquely named sibling, then rename into place. A half-written
-/// file never carries the final name, and concurrent CSP processes racing on
+/// file never carries the final name, and concurrent Pproni processes racing on
 /// the same target are harmless — the loser sees the winner's finished file.
 fn write_atomically(dir: &Path, dest: &Path) -> Result<(), String> {
     let tmp = dir.join(format!(

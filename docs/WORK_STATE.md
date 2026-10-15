@@ -1,4 +1,4 @@
-# CSP work state
+# Pproni work state
 
 Read this first. Keep it short. Update it at the end of each work session.
 Last updated: 2026-10-13.

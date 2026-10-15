@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export CSP's committed source, comments stripped, into a clone of the shared repo.
+"""Export Pproni's committed source, comments stripped, into a clone of the shared repo.
 
 Reads HEAD of the private repo (never the working tree), copies only the files the
 config allowlists, strips comments, checks the result still formats, compiles and passes
@@ -371,7 +371,7 @@ def export(args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Export CSP source, comments stripped.")
+    ap = argparse.ArgumentParser(description="Export Pproni source, comments stripped.")
     ap.add_argument("--out", help="dry run into this directory instead of the clean clone")
     ap.add_argument("--config", default=CONFIG_PATH, type=Path, help="config file to use")
     ap.add_argument("--no-verify", action="store_true", help="skip the verify commands")

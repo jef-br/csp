@@ -6,7 +6,7 @@
 //! | R2 [`Route::CropSquare`] | no usable mask, or no room to grow | take the largest square already in the frame |
 //! | R3 [`Route::Fallback`] | no verdict at all | fit the whole image into a square canvas |
 //!
-//! **The bleed table lives inside R1.** `docs/csp-spec.md` §5 lists five behaviours for a subject
+//! **The bleed table lives inside R1.** `docs/pproni-spec.md` §5 lists five behaviours for a subject
 //! that reaches an edge. Four of them are one rule seen from four angles: a bled edge is blocked,
 //! an axis with a free side takes the margin, and the slack goes to the free sides.
 //! [`center_and_stretch`] applies that rule, so those four never reach [`Route::select`] as a

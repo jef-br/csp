@@ -6,8 +6,8 @@ Quantize a BiRefNet export to int8, the way that actually goes faster.
 Writes `<stem>_int8.onnx` beside the input. Run from the repo root; the
 calibration set is read from `JB core img batch/`.
 
-Result on an i7-12700H, 384px: a 37-image CSP batch drops from 17.50s to 8.21s
-(2.13x) and csp.exe from 194.3MiB to 79.6MiB, at mask IoU 0.9814 against fp32.
+Result on an i7-12700H, 384px: a 37-image Pproni batch drops from 17.50s to 8.21s
+(2.13x) and pproni.exe from 194.3MiB to 79.6MiB, at mask IoU 0.9814 against fp32.
 
 Three settings are load-bearing. Each was measured; none is cosmetic.
 

@@ -48,7 +48,7 @@ pub fn process_file(input: &Path, output: &Path, backup: &Path) -> Result<(), St
 /// safely without claiming to know where the subject is.
 ///
 /// The mask is carried out alongside the verdict: the exporter samples the BGC/FGC debug tags from
-/// it and writes it as `<stem>_segmask.jpg` when `CSP_DEBUG_TAGS` is set.
+/// it and writes it as `<stem>_segmask.jpg` when `PPRONI_DEBUG_TAGS` is set.
 fn classify(prep: &Prepared) -> Option<(ShotClassification, Mask)> {
     use crate::core::shot_classifier::{
         classify_instance, CroppedModel, RefineParams, RefinementInput, SegmentationModel,

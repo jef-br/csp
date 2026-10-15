@@ -1,7 +1,7 @@
 //! Debug trace: save every intermediate image of a run, so a bad result can be followed back to the
 //! stage that caused it.
 //!
-//! **Turning it on.** The same marker the exporter looks for: a file named `CSP_DEBUG_TAGS` next
+//! **Turning it on.** The same marker the exporter looks for: a file named `PPRONI_DEBUG_TAGS` next
 //! to the running executable. One check per process, cached. With no marker, every function here
 //! is inert. Debug and release both honour it — same scope as the exporter's filename tags and
 //! `<stem>_segmask.jpg`.
@@ -85,19 +85,19 @@ mod live {
     }
 }
 
-/// `true` when a `CSP_DEBUG_TAGS` file sits next to the running executable. One lookup per
+/// `true` when a `PPRONI_DEBUG_TAGS` file sits next to the running executable. One lookup per
 /// process, cached. The exporter's filename tags and the trace both read this.
 pub fn debug_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
         std::env::current_exe()
             .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("CSP_DEBUG_TAGS")))
+            .and_then(|exe| exe.parent().map(|dir| dir.join("PPRONI_DEBUG_TAGS")))
             .is_some_and(|p| p.is_file())
     })
 }
 
-/// Start tracing one image. Inert unless the `CSP_DEBUG_TAGS` marker is next to the exe. Stage
+/// Start tracing one image. Inert unless the `PPRONI_DEBUG_TAGS` marker is next to the exe. Stage
 /// images and `log.txt` are written into `output.parent()`, using `output`'s file stem — the same
 /// folder and stem the exporter uses for `<stem>_segmask.jpg`.
 pub fn begin(output: &Path) -> Session {

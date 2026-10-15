@@ -30,9 +30,9 @@
 //!   `--` separates the stem from the tags; `=` stands in for the spec's
 //!   `:` (a colon is illegal in Windows filenames).
 //!
-//! The EIX bits come from `csp::core::shot_classifier::shotcode`, the colours from
-//! `csp::core::exporter::colors` — the same code the pipeline exporter uses for its
-//! `CSP_DEBUG_TAGS` output.
+//! The EIX bits come from `pproni::core::shot_classifier::shotcode`, the colours from
+//! `pproni::core::exporter::colors` — the same code the pipeline exporter uses for its
+//! `PPRONI_DEBUG_TAGS` output.
 //!
 //! Usage:
 //!   cargo run --release --example run_dir -- <input> [output_dir]
@@ -43,11 +43,11 @@
 //!   BIREFNET_ONNX to a path to run a different export instead — that is what this harness is for.
 //!   ORT_DYLIB_PATH overrides the ONNX Runtime library (default: ./onnxruntime.dll).
 
-use csp::core::shot_classifier::geometry::Rect;
-use csp::core::shot_classifier::refine::{RefineParams, RefinementInput};
-use csp::core::exporter::{self, colors};
-use csp::core::shot_classifier::shotcode::eix_bits;
-use csp::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, SegmentationModel};
+use pproni::core::shot_classifier::geometry::Rect;
+use pproni::core::shot_classifier::refine::{RefineParams, RefinementInput};
+use pproni::core::exporter::{self, colors};
+use pproni::core::shot_classifier::shotcode::eix_bits;
+use pproni::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, SegmentationModel};
 use image::{Rgb, RgbImage};
 use std::path::{Path, PathBuf};
 
@@ -131,10 +131,10 @@ fn main() {
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("img");
 
-        // Debug trace (CSP_DEBUG_TAGS marker file next to run_dir.exe): every stage image this
+        // Debug trace (PPRONI_DEBUG_TAGS marker file next to run_dir.exe): every stage image this
         // run produces, as `<stem>  -  NN.jpg`, written next to run_dir's output files.
         let trace_target = output_dir.join(&file_name);
-        let _trace = csp::core::trace::begin(&trace_target);
+        let _trace = pproni::core::trace::begin(&trace_target);
 
         let image = match image::open(path) {
             Ok(img) => img.to_rgb8(),
@@ -144,7 +144,7 @@ fn main() {
             }
         };
 
-        csp::core::trace::image(csp::core::trace::stage::WORKING, "image as run_dir feeds it (no EXIF or colour handling)", || image.clone());
+        pproni::core::trace::image(pproni::core::trace::stage::WORKING, "image as run_dir feeds it (no EXIF or colour handling)", || image.clone());
         let instances = match model.segment(&image) {
             Ok(instances) => instances,
             Err(e) => {

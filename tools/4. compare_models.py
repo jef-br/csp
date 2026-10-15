@@ -1,12 +1,12 @@
 """
-A/B two BiRefNet exports: speed under CSP's real concurrency, and mask agreement.
+A/B two BiRefNet exports: speed under Pproni's real concurrency, and mask agreement.
 
     python "tools/4. compare_models.py" models/birefnet_lite_512.onnx models/birefnet_lite_384_int8.onnx
 
 The first model given is the reference; IoU is measured against its masks. Run
 from the repo root - test images come from `JB core img batch/`.
 
-Speed is measured the way CSP actually runs: one shared session driven by N
+Speed is measured the way Pproni actually runs: one shared session driven by N
 concurrent single-threaded workers, because `app::batch` fans images across
 cores with rayon and the session is built with `with_intra_threads(1)`. Timing a
 lone forward pass overstates the gain - this workload is memory-bandwidth bound,

@@ -1,4 +1,4 @@
-# CSP architecture
+# Pproni architecture
 
 Map of every module, its public surface, and how data flows through the pipeline.
 
@@ -96,7 +96,7 @@ silently processed as a clean free-standing shot.
 | `app::i18n` | `Lang`, `drop_prompt`, `close_line`, `interrupt_hint`, `backup_label`, `output_label`, `remaining`, `finished` | EN/ES/FR/NL/IT/DE |
 
 `console`, `desktop`, `header` and `shell` are `#[cfg(windows)]`; `progress` and `theme` are cross-platform. On other hosts only the two-argument CLI form
-(`csp <input_dir> <output_dir>`) is available, and `i18n` reads as dead code because nothing calls
+(`pproni <input_dir> <output_dir>`) is available, and `i18n` reads as dead code because nothing calls
 it — that is expected, not drift.
 
 ### `core` — the imaging pipeline
@@ -113,9 +113,9 @@ it — that is expected, not drift.
 The refine params live in `config` next to `WORKING_SIZE` because they are expressed in
 working-resolution pixels — change one and the others shift meaning.
 
-#### Debug tags (`CSP_DEBUG_TAGS` marker file)
+#### Debug tags (`PPRONI_DEBUG_TAGS` marker file)
 
-Off by default — the shipped exe writes a clean `<stem>.jpg`. Drop a file named `CSP_DEBUG_TAGS`
+Off by default — the shipped exe writes a clean `<stem>.jpg`. Drop a file named `PPRONI_DEBUG_TAGS`
 next to the executable (content ignored, only presence matters — same sidecar convention
 `core::sidecar` uses for `onnxruntime.dll`/the `.onnx` model) and the exporter instead names each
 output from the shot classifier's verdict:
@@ -175,7 +175,7 @@ Three routes, keyed on the shot classifier's verdict:
 | **R2** `CropSquare` | `mask_too_small`, or left+right bled and nothing else, or all four bled | the largest square already in the frame, centred on the frame |
 | **R3** `Fallback` | no verdict at all | fit the whole image into a square canvas, centred, white fill |
 
-**Three routes, six behaviours.** `docs/csp-spec.md` §5's table is not a competing route list — it is
+**Three routes, six behaviours.** `docs/pproni-spec.md` §5's table is not a competing route list — it is
 the *inside* of these routes. Four of its bleed rows are one rule seen from four angles, and
 `center_and_stretch` applies that rule: a bled edge is pinned, an axis with a free side takes the
 margin, and the slack goes to the free sides. Choosing among them is a behaviour, not a routing
@@ -199,7 +199,7 @@ guess costs framing rather than pixels.
 
 ## 5. Single hardened exe, no install
 
-**CSP ships as one hardened executable with no installation step. This is a hard requirement.**
+**Pproni ships as one hardened executable with no installation step. This is a hard requirement.**
 
 Hardening is already in place in `Cargo.toml`'s release profile — fat LTO, one codegen unit,
 symbols and debuginfo stripped, no PDB, abort on panic — and is anti-RE as much as size. The
@@ -222,13 +222,13 @@ compiled in:
   `<%LOCALAPPDATA%|temp>/pproni-<tag>/pproni.dll` and that path is handed to `ort::init_from`.
   The `<tag>` is the library's size plus a content hash: a rebuilt runtime lands in a fresh
   directory, repeat runs reuse the file already there, and the write is atomic (temp name then
-  rename) so concurrent CSP processes don't corrupt it.
+  rename) so concurrent Pproni processes don't corrupt it.
 
 Both source files are gitignored — the model in `models/`, `onnxruntime.dll` at the repo root — and
 a missing one is a *build* failure naming the file, not a runtime surprise. `models/` is the single
 place any `.onnx` lives; it holds every variant being tried, and only `MODEL_FILE` decides which one
-is baked in. The only files CSP still touches beside the exe are
-optional markers (`CSP_DEBUG_TAGS`) and the `ORT_DYLIB_PATH` override the `examples/` dev harness
+is baked in. The only files Pproni still touches beside the exe are
+optional markers (`PPRONI_DEBUG_TAGS`) and the `ORT_DYLIB_PATH` override the `examples/` dev harness
 uses to point at a hand-placed runtime.
 
 ### Why the runtime is unpacked rather than linked
@@ -285,10 +285,10 @@ What each container now says:
   `ShotClassification` + `Mask` that leaves for the Processor. The no-verdict `None` is a node of
   its own, because it is not the same thing as an empty edge list.
 - **Processor** — `Route::select`'s two questions and the three routes behind them.
-- **Exporter** — `resize::to_envelope`, the `CSP_DEBUG_TAGS` branch, the JPEG save, and the move of
+- **Exporter** — `resize::to_envelope`, the `PPRONI_DEBUG_TAGS` branch, the JPEG save, and the move of
   the original into `PPRONI-BACKUP` on success.
-- **Dev harness** — `examples/run_dir.rs`, replacing the proposed `CSP-Analyzer` container whose
-  target (`src/bin/csp_analyzer.rs`) was deleted with the classical detector.
+- **Dev harness** — `examples/run_dir.rs`, replacing the proposed `Pproni-Analyzer` container whose
+  target (`src/bin/pproni_analyzer.rs`) was deleted with the classical detector.
 
 Two green bold tags survive from the debug-image protocol, `SEGMASK` and `REFINE`, and `run_dir`
 follows that protocol for the two snapshots it writes: `<stem>___3-class_10_SEGMASK.png` and

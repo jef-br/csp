@@ -6,12 +6,12 @@
 //! retry. Originals are never deleted — they keep their name and extension under `PPRONI-BACKUP`, in
 //! the same subfolder layout the output uses.
 //!
-//! ## Debug tags (`CSP_DEBUG_TAGS` marker file)
+//! ## Debug tags (`PPRONI_DEBUG_TAGS` marker file)
 //!
 //! Off by default — the shipped exe writes a clean `<stem>.jpg`. Turned on by a file named
-//! `CSP_DEBUG_TAGS` sitting next to the executable — no shell, no environment variable, because
-//! CSP ships as one file with nothing to configure. The file's content is ignored; only its
-//! presence matters. Delete it to turn tagging back off. This marker is the *only* thing CSP ever
+//! `PPRONI_DEBUG_TAGS` sitting next to the executable — no shell, no environment variable, because
+//! Pproni ships as one file with nothing to configure. The file's content is ignored; only its
+//! presence matters. Delete it to turn tagging back off. This marker is the *only* thing Pproni ever
 //! looks for beside the exe; the runtime and the weights are inside it.
 //!
 //! When on, each output is renamed `<stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]`: EIX from the shot
@@ -82,7 +82,7 @@ fn move_to_backup(source: &Path, backup: &Path) -> Result<(), String> {
     std::fs::remove_file(source).map_err(|e| format!("remove original after backup: {e}"))
 }
 
-/// A `CSP_DEBUG_TAGS` file next to the running executable turns on filename tagging and the
+/// A `PPRONI_DEBUG_TAGS` file next to the running executable turns on filename tagging and the
 /// per-image segmask. The same marker drives [`trace`], so one function serves both.
 fn tags_enabled() -> bool {
     trace::debug_enabled()
@@ -177,7 +177,7 @@ mod tests {
         let mask = Mask { width: 2, height: 2, data: vec![0, 0, 255, 255] };
         let (out_w, out_h) = (8u32, 6u32);
 
-        let path = std::env::temp_dir().join("csp_test_segmask.jpg");
+        let path = std::env::temp_dir().join("pproni_test_segmask.jpg");
         let _ = std::fs::remove_file(&path);
         save_segmask(&mask, out_w, out_h, &path).expect("write segmask");
 
