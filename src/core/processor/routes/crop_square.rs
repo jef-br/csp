@@ -21,7 +21,7 @@
 //! the mask is not to be trusted, and the third has a subject spanning the whole width — so the
 //! frame is the more reliable anchor in all three.
 //!
-//! `docs/csp-spec.md` §6's CoG/MSR square is the refinement this leaves room for: anchor the crop
+//! `docs/pproni-spec.md` §6's CoG/MSR square is the refinement this leaves room for: anchor the crop
 //! on the saliency-weighted centre rather than the frame's middle. Nothing in the 37-image set
 //! needs it yet.
 

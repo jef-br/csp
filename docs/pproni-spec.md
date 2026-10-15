@@ -1,8 +1,8 @@
-# CSP — Design Spec & Source of Truth
+# Pproni — Design Spec & Source of Truth
 
 *living document · maintained by Claude from your comments + chat · v1 · 2026-08-26*
 
-This is the single place the target CSP behaviour is written down. It supersedes the flow
+This is the single place the target Pproni behaviour is written down. It supersedes the flow
 diagrams for "what it should do". Status tags mark reality vs intent. Comment on any line;
 I fold changes back in here.
 
@@ -336,6 +336,6 @@ fill     left band ~400px stretches ~1.26x , right band ~800px stretches ~1.37x
 
 ---
 
-*CSP source of truth · comment to change any line · I maintain it from your comments + chat*
+*Pproni source of truth · comment to change any line · I maintain it from your comments + chat*
 
 *Source artifact: https://claude.ai/code/artifact/b3d70cd2-f493-4d01-992b-ace7709b5bc3*

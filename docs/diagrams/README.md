@@ -1,6 +1,6 @@
 # Diagrams
 
-WYSIWYG diagrams for CSP, edited as draw.io (diagrams.net) files — free, no account,
+WYSIWYG diagrams for Pproni, edited as draw.io (diagrams.net) files — free, no account,
 no server.
 
 ## One-time setup
@@ -34,19 +34,6 @@ each other. Dropping a shape into a container re-parents it in the XML
 by pixel position. Give the container a title and it reads as a labeled group visually
 too.
 
-## Where this sits relative to the existing Mermaid diagrams
-
-`docs/ARCHITECTURE.md` already carries four Mermaid diagrams (class map, pipeline flow,
-detection internals, geometry routing) with a maintenance rule tying nodes to actual
-files — that stays as-is for now. Mermaid is still the right tool when the diagram is
-simple enough that auto-layout from text is fine and you want it inline with the prose
-it documents.
-
-Reach for a `.drawio.svg` here instead when manual layout actually matters — spatial
-grouping via containers, non-tree layouts, anything fiddly enough that hand-placing
-beats fighting Mermaid's auto-layout. Migrating any of the four existing diagrams to
-draw.io is a separate decision, not done as part of this setup.
-
 ## Naming
 
 kebab-case, one diagram per concern, e.g. `pipeline-overview.drawio.svg`.
@@ -57,19 +44,16 @@ Point Claude at the file path (or attach it). It reads the embedded XML directly
 the exact node/edge/container structure, and can render the SVG to a PNG when it needs
 to check the visual layout too — same file, no separate format needed for either side.
 
-## CSP-Analyzer: tagging a diagram Rectangle and naming its debug image
+## run_dir: tagging a diagram Rectangle and naming its debug image
 
-> **Status.** `src/bin/csp_analyzer.rs` was deleted with the classical detector, so this
-> protocol currently has no tool implementing it. Its successor is
-> `shot-classifier/examples/run_dir.rs`, which writes `<stem>_1_segmask.png` /
-> `<stem>_2_refine.png` per image on its own simpler scheme. Decide whether to port the
-> tag protocol below onto `run_dir` or retire it before following these steps.
-> `JBA2B.drawio.svg` is now the only diagram in this folder — the four coarser
-> `class-map` / `pipeline-flow` / `detection-internals` / `geometry-routing` diagrams this
-> section used to contrast it with were deleted along with the detector.
+The protocol lives on `examples/run_dir.rs`, which currently writes two snapshots
+(`SEGMASK`, `REFINE`). `JBA2B.drawio.svg` is the only diagram in this folder, so every
+tagged Rectangle lives there. Out of scope for this protocol: the shipped exporter's
+`PPRONI_DEBUG_TAGS` outputs (`<stem>_segmask.jpg` and the stage trace
+`<stem>  -  NN.jpg`) each keep their own naming.
 
-`src/bin/csp_analyzer.rs` (a dev-only replay harness, see its own doc comment) writes one
-intermediate image per internal decision point it replays. Each of those images is tied to
+`examples/run_dir.rs` (a dev-only harness, see its own doc comment) writes one
+intermediate image per internal decision point it snapshots. Each of those images is tied to
 a specific Rectangle inside a Container on `docs/diagrams/JBA2B.drawio.svg` — the detailed
 per-decision flowchart. Whenever a new snapshot moment is added:
 
@@ -86,20 +70,21 @@ per-decision flowchart. Whenever a new snapshot moment is added:
 2. Name the output file `<original stem>___<moduleindex>_<substep>_<TAG>.png`, so sorting
    filenames alphabetically reproduces real pipeline order:
    - `moduleindex` — one digit-word pair per Container, fixed regardless of what
-     csp_analyzer currently snapshots: `0-app`, `1-core`, `2-prep` (Preprocessor),
+     `run_dir` currently snapshots: `0-app`, `1-core`, `2-prep` (Preprocessor),
      `3-class` (Shot Classifier), `4-proc` (Processor), `5-expo` (Exporter). The digit
      exists because alphabetizing the words themselves gets the order wrong (e.g. `class` <
      `prep` < `proc` alphabetically, but Preprocessor actually runs before Shot Classifier).
+     (`run_dir` skips the Preprocessor, so it has only used `3-class` so far.)
    - `substep` — a 2-digit number gapped by 10s (`10`, `20`, `30`, ...) reflecting real
      execution order *within* that Container. The gap leaves room to insert a step later
      (e.g. `15`) without renumbering its neighbors. Same reasoning as `moduleindex`: the
      TAG words won't reliably alphabetize in execution order on their own (`DETECT` <
      `SEGMASK` alphabetically, but the segmentation mask is actually computed first).
    - `TAG` — exactly the green-bold tag from step 1, verbatim, no extra prefix.
-3. `csp_analyzer` never creates per-image subfolders — output mirrors input's structure
-   exactly (flat directory in, flat directory out), so the filename alone (not folder
-   placement) must carry both the pipeline order and the diagram traceability.
-4. If the value the diagram points to isn't reachable from `src/bin/csp_analyzer.rs` today
+3. `run_dir` never creates per-image subfolders — output is one flat directory, so the
+   filename alone (not folder placement) must carry both the pipeline order and the diagram
+   traceability.
+4. If the value the diagram points to isn't reachable from `examples/run_dir.rs` today
    (a private module or function), add a small `pub fn debug_*` where the value is computed,
    then a thin wrapper in `src/core/shot_classifier/detect.rs` that handles the downscale/
    upscale dance (mirroring `debug_segment`, which already does exactly this for
@@ -108,8 +93,8 @@ per-decision flowchart. Whenever a new snapshot moment is added:
    exposing a new module as `pub`. This does touch existing core files; get an explicit OK
    first if that constraint hasn't already been relaxed for the session.
 
-Current mapping (as of this writing): `2-prep_10_PREPROC`, `3-class_02_SLIC`,
-`3-class_05_Geodesics`, `3-class_10_SEGMASK`, `3-class_20_DETECT`, `4-proc_10_FILL`,
-`4-proc_20_FINAL`. Note `Geodesics` breaks the otherwise-all-caps tag style — it was authored
-directly on the diagram rather than by this convention's usual all-caps pattern, and step 2 above
-is "verbatim," so the code and filename keep that exact casing rather than normalizing it.
+Current mapping (as of this writing, what `run_dir` writes): `3-class_10_SEGMASK` and
+`3-class_20_REFINE`. These are the only two green tags on `JBA2B.drawio.svg`; the older
+`PREPROC` / `SLIC` / `Geodesics` / `DETECT` / `FILL` / `FINAL` tags went with the classical
+detector. Tags are copied verbatim (step 2), so a tag authored in mixed case, like the old
+`Geodesics`, keeps that exact casing in the filename.

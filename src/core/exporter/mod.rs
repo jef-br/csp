@@ -6,12 +6,12 @@
 //! retry. Originals are never deleted — they keep their name and extension under `PPRONI-BACKUP`, in
 //! the same subfolder layout the output uses.
 //!
-//! ## Debug tags (`CSP_DEBUG_TAGS` marker file)
+//! ## Debug tags (`PPRONI_DEBUG_TAGS` marker file)
 //!
 //! Off by default — the shipped exe writes a clean `<stem>.jpg`. Turned on by a file named
-//! `CSP_DEBUG_TAGS` sitting next to the executable — no shell, no environment variable, because
-//! CSP ships as one file with nothing to configure. The file's content is ignored; only its
-//! presence matters. Delete it to turn tagging back off. This marker is the *only* thing CSP ever
+//! `PPRONI_DEBUG_TAGS` sitting next to the executable — no shell, no environment variable, because
+//! Pproni ships as one file with nothing to configure. The file's content is ignored; only its
+//! presence matters. Delete it to turn tagging back off. This marker is the *only* thing Pproni ever
 //! looks for beside the exe; the runtime and the weights are inside it.
 //!
 //! When on, each output is renamed `<stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]`: EIX from the shot
@@ -29,11 +29,12 @@ pub mod resize;
 pub mod save;
 
 use super::config;
+use super::trace;
 use super::shot_classifier::shotcode::{eix_bits, NO_VERDICT_EIX};
 use super::shot_classifier::{Mask, ShotClassification};
+use colors::ShotColors;
 use image::{GrayImage, RgbImage};
 use std::path::Path;
-use std::sync::OnceLock;
 
 /// Everything the debug tags need from the classifier, threaded through from `core::process_file`.
 /// `None` at the call site means "no verdict".
@@ -44,6 +45,9 @@ pub struct ShotInputs<'a> {
     pub mask: &'a Mask,
     /// The edge verdict.
     pub class: &'a ShotClassification,
+    /// BGC/FGC sampled in `core::process_file` so the trace log and the filename tag share one
+    /// measurement instead of calling `colors::sample` twice per image.
+    pub colors: &'a ShotColors,
 }
 
 pub fn export(
@@ -78,16 +82,10 @@ fn move_to_backup(source: &Path, backup: &Path) -> Result<(), String> {
     std::fs::remove_file(source).map_err(|e| format!("remove original after backup: {e}"))
 }
 
-/// A `CSP_DEBUG_TAGS` file next to the running executable turns on filename tagging and the
-/// per-image segmask. Read once.
+/// A `PPRONI_DEBUG_TAGS` file next to the running executable turns on filename tagging and the
+/// per-image segmask. The same marker drives [`trace`], so one function serves both.
 fn tags_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join("CSP_DEBUG_TAGS")))
-            .is_some_and(|p| p.is_file())
-    })
+    trace::debug_enabled()
 }
 
 /// The filename tag string: `--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>]`. EIX is the classifier's
@@ -95,12 +93,12 @@ fn tags_enabled() -> bool {
 /// `--` separates the stem from the tags and each tag from the next; `=` stands in for the spec's
 /// `:` (illegal in Windows filenames).
 pub fn shot_tags(shot: &ShotInputs<'_>) -> String {
-    tags(&eix_bits(&shot.class.touches_edges), &colors::sample(shot.working, shot.mask))
+    tags(&eix_bits(&shot.class.touches_edges), shot.colors)
 }
 
 /// Join an EIX string and the sampled colours into the tag string. A colour that was not found is
 /// left out.
-pub fn tags(eix: &str, colors: &colors::ShotColors) -> String {
+pub fn tags(eix: &str, colors: &ShotColors) -> String {
     let mut s = format!("--EIX={eix}");
     if let Some(c) = &colors.bgc {
         s.push_str("--BGC=");
@@ -179,7 +177,7 @@ mod tests {
         let mask = Mask { width: 2, height: 2, data: vec![0, 0, 255, 255] };
         let (out_w, out_h) = (8u32, 6u32);
 
-        let path = std::env::temp_dir().join("csp_test_segmask.jpg");
+        let path = std::env::temp_dir().join("pproni_test_segmask.jpg");
         let _ = std::fs::remove_file(&path);
         save_segmask(&mask, out_w, out_h, &path).expect("write segmask");
 

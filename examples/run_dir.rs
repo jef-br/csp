@@ -4,13 +4,17 @@
 //!   <stem>--EIX=<trbl>[--BGC=<hex>][--FGC=<hex>].<ext>
 //!                          the input image, copied verbatim, renamed   (step 0)
 //!                          with the shot code derived so far
-//!   <stem>_1_segmask.png   BiRefNet foreground mask                    (step 1)
-//!   <stem>_2_refine.png    white canvas the size of the segmask with   (step 2)
+//!   <stem>___3-class_10_SEGMASK.png
+//!                          BiRefNet foreground mask                    (step 1)
+//!   <stem>___3-class_20_REFINE.png
+//!                          white canvas the size of the segmask with   (step 2)
 //!                          each gated edge's refined region pasted back
 //!                          (only if an edge was gated)
 //!
-//! plus `zzz_results.json` (named to sort last). The `_<n>_` infix keeps
-//! generated files sorted in pipeline order next to their source.
+//! plus `zzz_results.json` (named to sort last). Snapshots follow the diagram-tag protocol
+//! (`docs/diagrams/README.md`): `<stem>___<moduleindex>_<substep>_<TAG>.png`, where `<TAG>` is the
+//! green-bold word on the matching rectangle of `JBA2B.drawio.svg`, verbatim. Sorting the names
+//! alphabetically reproduces pipeline order, and the flat output keeps each image's files together.
 //!
 //! Shot code (partial — BG type comes later):
 //!   EIX  edge intersection, 4-bit TRBL (top-right-bottom-left). `1000`
@@ -26,9 +30,9 @@
 //!   `--` separates the stem from the tags; `=` stands in for the spec's
 //!   `:` (a colon is illegal in Windows filenames).
 //!
-//! The EIX bits come from `csp::core::shot_classifier::shotcode`, the colours from
-//! `csp::core::exporter::colors` — the same code the pipeline exporter uses for its
-//! `CSP_DEBUG_TAGS` output.
+//! The EIX bits come from `pproni::core::shot_classifier::shotcode`, the colours from
+//! `pproni::core::exporter::colors` — the same code the pipeline exporter uses for its
+//! `PPRONI_DEBUG_TAGS` output.
 //!
 //! Usage:
 //!   cargo run --release --example run_dir -- <input> [output_dir]
@@ -39,15 +43,21 @@
 //!   BIREFNET_ONNX to a path to run a different export instead — that is what this harness is for.
 //!   ORT_DYLIB_PATH overrides the ONNX Runtime library (default: ./onnxruntime.dll).
 
-use csp::core::shot_classifier::geometry::Rect;
-use csp::core::shot_classifier::refine::{RefineParams, RefinementInput};
-use csp::core::exporter::{self, colors};
-use csp::core::shot_classifier::shotcode::eix_bits;
-use csp::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, SegmentationModel};
+use pproni::core::shot_classifier::geometry::Rect;
+use pproni::core::shot_classifier::refine::{RefineParams, RefinementInput};
+use pproni::core::exporter::{self, colors};
+use pproni::core::shot_classifier::shotcode::eix_bits;
+use pproni::core::shot_classifier::{classify_instance, BiRefNetConfig, BiRefNetModel, Edge, SegmentationModel};
 use image::{Rgb, RgbImage};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_OUTPUT: &str = "test data/OUTPUT";
+
+// Snapshot name suffixes, `___<moduleindex>_<substep>_<TAG>.png`. Each TAG is the green-bold word on
+// its rectangle of `docs/diagrams/JBA2B.drawio.svg` and is copied verbatim. `3-class` is the Shot
+// Classifier container; the substeps are gapped by 10s in execution order inside it.
+const SEGMASK_SUFFIX: &str = "___3-class_10_SEGMASK.png";
+const REFINE_SUFFIX: &str = "___3-class_20_REFINE.png";
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -121,6 +131,11 @@ fn main() {
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("img");
 
+        // Debug trace (PPRONI_DEBUG_TAGS marker file next to run_dir.exe): every stage image this
+        // run produces, as `<stem>  -  NN.jpg`, written next to run_dir's output files.
+        let trace_target = output_dir.join(&file_name);
+        let _trace = pproni::core::trace::begin(&trace_target);
+
         let image = match image::open(path) {
             Ok(img) => img.to_rgb8(),
             Err(e) => {
@@ -129,6 +144,7 @@ fn main() {
             }
         };
 
+        pproni::core::trace::image(pproni::core::trace::stage::WORKING, "image as run_dir feeds it (no EXIF or colour handling)", || image.clone());
         let instances = match model.segment(&image) {
             Ok(instances) => instances,
             Err(e) => {
@@ -176,7 +192,7 @@ fn main() {
         for (i, px) in m.pixels_mut().enumerate() {
             px.0[0] = inst.mask.data[i];
         }
-        let _ = m.save(output_dir.join(format!("{stem}_1_segmask.png")));
+        let _ = m.save(output_dir.join(format!("{stem}{SEGMASK_SUFFIX}")));
 
         // step 2: one canvas the size of the segmask, white except for
         // the refined region of each gated edge, pasted back where it
@@ -194,7 +210,7 @@ fn main() {
                 let patch = crop_region(&image, *reg);
                 image::imageops::overlay(&mut canvas, &patch, reg.x as i64, reg.y as i64);
             }
-            let _ = canvas.save(output_dir.join(format!("{stem}_2_refine.png")));
+            let _ = canvas.save(output_dir.join(format!("{stem}{REFINE_SUFFIX}")));
         }
 
         let gate_json: Vec<String> = result

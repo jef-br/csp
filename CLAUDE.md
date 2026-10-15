@@ -1,5 +1,6 @@
 # CLAUDE.md
 Project notes for any Claude session working in this repo.
+**Read `docs/WORK_STATE.md` first:** what is decided, rejected and still open.
 
 ## Layout
 One crate, one `src/` tree.
@@ -40,7 +41,7 @@ to patch again. `docs/ARCHITECTURE.md` §6 says what each container covers.
 
 ## Docs
 * `docs/ARCHITECTURE.md` — module map, pipeline stages, routing, known gaps.
-* `docs/csp-spec.md` — the design spec. Its §5 table is six *behaviours*, not six routes:
+* `docs/pproni-spec.md` — the design spec. Its §5 table is six *behaviours*, not six routes:
   there are three routes, and §5's rows live inside R1 and R2.
 
 ## Commit attribution

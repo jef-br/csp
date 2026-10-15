@@ -1,5 +1,5 @@
-use csp::core::shot_classifier::segmentation::{Instance, Mask};
-use csp::core::shot_classifier::{classify_instance, geometry::Rect, refine::RefineParams, refine::RefinementInput, Edge};
+use pproni::core::shot_classifier::segmentation::{Instance, Mask};
+use pproni::core::shot_classifier::{classify_instance, geometry::Rect, refine::RefineParams, refine::RefinementInput, Edge};
 use image::{Rgb, RgbImage};
 
 /// Builds a working-resolution image (mid-gray background) and its

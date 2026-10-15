@@ -34,6 +34,19 @@ impl Mask {
         self.data[(y * self.width + x) as usize] != 0
     }
 
+    /// This mask laid on a blank `canvas_w x canvas_h` canvas with its top left corner at `(x, y)`.
+    /// Everything outside it is background. Anything that would fall off the canvas is dropped.
+    pub fn pasted_into(&self, canvas_w: u32, canvas_h: u32, x: u32, y: u32) -> Mask {
+        let mut data = vec![0u8; canvas_w as usize * canvas_h as usize];
+        let run = self.width.min(canvas_w.saturating_sub(x)) as usize;
+        for row in 0..self.height.min(canvas_h.saturating_sub(y)) {
+            let from = row as usize * self.width as usize;
+            let to = (y + row) as usize * canvas_w as usize + x as usize;
+            data[to..to + run].copy_from_slice(&self.data[from..from + run]);
+        }
+        Mask { width: canvas_w, height: canvas_h, data }
+    }
+
     /// Nearest-neighbor upsamples the sub-region `region` (in this
     /// mask's own coordinate space) to a `target_w x target_h` mask.
     /// Used to project the working-resolution mask into a full
@@ -91,4 +104,78 @@ pub trait SegmentationModel {
     /// route on the difference: a batch keeps going and the image falls
     /// to its no-verdict route rather than the whole run panicking.
     fn segment(&self, image: &image::RgbImage) -> Result<Vec<Instance>, String>;
+}
+
+/// A model that is shown a crop of the frame but answers for the whole frame.
+///
+/// The optimiser hands the model only the part of the working image that holds the product
+/// (`crop`, in working-resolution coordinates). The model's mask comes back the size of that crop;
+/// this puts it back where it belongs on a blank canvas the size of the whole working image, with
+/// the full frame as the box, so the gate, refinement and routes see the same kind of mask as when
+/// the model is shown the whole frame.
+pub struct CroppedModel<'a, M: SegmentationModel> {
+    model: &'a M,
+    /// Width and height of the working image the crop was cut from.
+    canvas: (u32, u32),
+    crop: Rect,
+}
+
+impl<'a, M: SegmentationModel> CroppedModel<'a, M> {
+    pub fn new(model: &'a M, canvas: (u32, u32), crop: Rect) -> Self {
+        CroppedModel { model, canvas, crop }
+    }
+}
+
+impl<M: SegmentationModel> SegmentationModel for CroppedModel<'_, M> {
+    /// `image` is the crop itself.
+    fn segment(&self, image: &image::RgbImage) -> Result<Vec<Instance>, String> {
+        let (w, h) = self.canvas;
+        let whole = Rect::from_bounds(0, 0, w.saturating_sub(1), h.saturating_sub(1));
+        Ok(self
+            .model
+            .segment(image)?
+            .into_iter()
+            .map(|found| Instance { mask: found.mask.pasted_into(w, h, self.crop.x, self.crop.y), bbox: whole, ..found })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::RgbImage;
+
+    /// A stand-in model: marks the whole image it is shown.
+    struct AllForeground;
+
+    impl SegmentationModel for AllForeground {
+        fn segment(&self, image: &RgbImage) -> Result<Vec<Instance>, String> {
+            let (w, h) = image.dimensions();
+            let mask = Mask { width: w, height: h, data: vec![255; (w * h) as usize] };
+            Ok(vec![Instance { mask, bbox: Rect::from_bounds(0, 0, w - 1, h - 1), class_id: 0, confidence: 1.0 }])
+        }
+    }
+
+    /// The mask lands at the crop's position; the rest of the frame is background.
+    #[test]
+    fn the_mask_lands_where_the_crop_was_cut() {
+        let crop = Rect { x: 30, y: 20, w: 40, h: 25 };
+        let model = CroppedModel::new(&AllForeground, (100, 80), crop);
+
+        let found = model.segment(&RgbImage::new(40, 25)).unwrap().remove(0);
+
+        assert_eq!((found.mask.width, found.mask.height), (100, 80));
+        assert_eq!(found.mask.data.iter().filter(|&&v| v > 0).count(), 40 * 25);
+        assert!(found.mask.get(30, 20) && found.mask.get(69, 44));
+        assert!(!found.mask.get(29, 20) && !found.mask.get(30, 19) && !found.mask.get(70, 44) && !found.mask.get(69, 45));
+        assert_eq!(found.bbox, Rect { x: 0, y: 0, w: 100, h: 80 });
+    }
+
+    /// A crop that is the whole frame gives the model's own mask back, unchanged.
+    #[test]
+    fn a_whole_frame_crop_changes_nothing() {
+        let model = CroppedModel::new(&AllForeground, (50, 40), Rect { x: 0, y: 0, w: 50, h: 40 });
+        let found = model.segment(&RgbImage::new(50, 40)).unwrap().remove(0);
+        assert!(found.mask.data.iter().all(|&v| v == 255));
+    }
 }

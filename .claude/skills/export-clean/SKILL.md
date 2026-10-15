@@ -1,7 +1,7 @@
 ---
 name: export-clean
 description: >
-  Publish CSP to the shared repo as bare source: no comments, no docs, no built files.
+  Publish Pproni to the shared repo as bare source: no comments, no docs, no built files.
   Strips a copy of HEAD into a separate clone of the shared repo, checks it still builds
   and passes tests, then commits and pushes only after the user approves. Manual only.
 disable-model-invocation: true
@@ -43,7 +43,7 @@ has commits the clone does not.
 2. **Exit 2 — config needs a value.** Ask the user with AskUserQuestion, write the answer
    into `config.json`, and rerun. Never pick a value yourself.
    - `clean_repo`: path to a local clone of the shared repo, outside this repo. If they
-     have none, offer to `git clone <url>` it next to this repo (e.g. `../csp-clean`).
+     have none, offer to `git clone <url>` it next to this repo (e.g. `../pproni-clean`).
    - `include_python_tools`: whether the model-pipeline scripts in `tools/` count as source.
 
 3. **Exit 3 — the shared repo moved on.** Someone else pushed. Show the listed commits and

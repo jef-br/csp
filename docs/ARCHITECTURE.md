@@ -1,4 +1,4 @@
-# CSP architecture
+# Pproni architecture
 
 Map of every module, its public surface, and how data flows through the pipeline.
 
@@ -27,7 +27,7 @@ load ──▶ preprocess ──▶ classify ──▶ dispatch ──▶ export
 | Stage | Module | In → Out |
 |---|---|---|
 | **load** | `core::preprocessor::load` | path → `Decoded` (image + ICC profile, EXIF applied) |
-| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + working copy) |
+| **preprocess** | `core::preprocessor::preprocess` | `Decoded` → `Prepared` (sRGB, alpha flattened, + true-colour working copy + the optimiser's crop); `Err` for an image with nothing but backdrop |
 | **classify** | `core::classify` (private) | `Prepared` → `Option<(ShotClassification, Mask)>` |
 | **dispatch** | `core::processor::routes::dispatch` | `Prepared` + verdict → `RgbImage` |
 | **export** | `core::exporter::export` | `RgbImage` (+ optional `ShotInputs`) → size envelope → JPEG on disk, source moved to `PPRONI-BACKUP` |
@@ -37,10 +37,34 @@ debug tags below.
 
 ### Why two resolutions
 
-`Prepared` carries the image twice: `original` at full resolution and `working` reduced to
-`config::WORKING_SIZE` on its longest side.
+`Prepared` carries the image three times: `original` at full resolution, `working` reduced to
+`config::WORKING_SIZE` on its longest side (both true colour), and `model_input`, the image BiRefNet
+sees: `working` after the optimiser. `Prepared::crop` says where `model_input` was cut from `working`.
 
-The segmentation model runs on `working`. Its pass-2 refinement then re-decides the subject boundary
+The optimiser is one function, `preprocessor::optimizer::optimize`, and does two things in order:
+
+1. **Colour balance.** A Levels move worked out once per image: per channel it finds `lo` (the highest
+   value with at most 0.68% of the pixels at or below it) and `hi` (the 99.32 percentile), shares the
+   lowest `lo` and the highest `hi` across the three channels, derives a gamma
+   `1 + lo/(255-lo) - (255-hi)/hi` kept between 0.01 and 9.99, and applies one 256-entry table to
+   every channel. The one rounding happens when the table is built.
+2. **Trim**, on the balanced image. The 16 border pixels (4 per edge, at 0/25/50/75% of the edge,
+   going round clockwise) give the backdrop colour range: per channel, the lowest and highest sample.
+   A pixel inside the range on all three channels is backdrop. Gaps are closed with a 2x2 window
+   (`TRIM_CLOSE_K`): a pixel only counts as product if it sits in a 2x2 block of non-backdrop pixels.
+   The tightest box around the product is squared to its largest side and grown on every side by the
+   larger of 10 px and 10% of that side (`TRIM_MARGIN_MIN_PX`, `TRIM_MARGIN_SHARE`). The balanced image
+   is cropped to that square, centred on the product and slid to stay inside the frame (the margin
+   shrinks if the frame is too narrow; if the product is longer than the frame's short side no square
+   fits, the margin drops to 10 px and the crop is cut at the frame). No product left: `Err`, the image is not processed and
+   stays in the input folder.
+
+`core::classify` shows the model only that crop, wrapped in `shot_classifier::CroppedModel`, which
+pastes the returned mask into a blank working-size canvas at the crop position (full-frame box). The
+gate, refinement and routes therefore see a full-frame mask, as if the model had been shown the whole
+frame.
+
+The segmentation model runs on the optimiser's crop of `working`. Its pass-2 refinement then re-decides the subject boundary
 against full-resolution pixels in `original`, because the mask it produced is upsampled and not
 pixel-accurate at the edge. Hand the classifier the same image twice and the scale between them
 collapses to 1.0, the refinement ring shrinks to its floor, and pass 2 stops doing anything.
@@ -72,7 +96,7 @@ silently processed as a clean free-standing shot.
 | `app::i18n` | `Lang`, `drop_prompt`, `close_line`, `interrupt_hint`, `backup_label`, `output_label`, `remaining`, `finished` | EN/ES/FR/NL/IT/DE |
 
 `console`, `desktop`, `header` and `shell` are `#[cfg(windows)]`; `progress` and `theme` are cross-platform. On other hosts only the two-argument CLI form
-(`csp <input_dir> <output_dir>`) is available, and `i18n` reads as dead code because nothing calls
+(`pproni <input_dir> <output_dir>`) is available, and `i18n` reads as dead code because nothing calls
 it — that is expected, not drift.
 
 ### `core` — the imaging pipeline
@@ -81,7 +105,7 @@ it — that is expected, not drift.
 |---|---|
 | `core` | `process_file(input, output) -> Result<(), String>` |
 | `core::config` | `JPEG_QUALITY`, `WORKING_SIZE`, `GATE_MARGIN_PX`, `REFINE_BAND_PX`, `REFINE_SAFETY_PX`, `REFINE_CONTEXT_PX` |
-| `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare` |
+| `core::preprocessor` | `Decoded`, `Prepared`, `load`, `preprocess`, `prepare`; `optimizer::optimize` |
 | `core::processor::routes` | `Route`, `Route::select`, `dispatch` |
 | `core::processor::routes::{center_and_stretch, crop_square, fallback}` | `apply` |
 | `core::exporter` | `export`, `ShotInputs`, `shot_tags`; `colors::sample` (BGC/FGC); `save::save_jpeg_srgb`, `icc::srgb_profile` |
@@ -89,9 +113,9 @@ it — that is expected, not drift.
 The refine params live in `config` next to `WORKING_SIZE` because they are expressed in
 working-resolution pixels — change one and the others shift meaning.
 
-#### Debug tags (`CSP_DEBUG_TAGS` marker file)
+#### Debug tags (`PPRONI_DEBUG_TAGS` marker file)
 
-Off by default — the shipped exe writes a clean `<stem>.jpg`. Drop a file named `CSP_DEBUG_TAGS`
+Off by default — the shipped exe writes a clean `<stem>.jpg`. Drop a file named `PPRONI_DEBUG_TAGS`
 next to the executable (content ignored, only presence matters — same sidecar convention
 `core::sidecar` uses for `onnxruntime.dll`/the `.onnx` model) and the exporter instead names each
 output from the shot classifier's verdict:
@@ -105,14 +129,18 @@ output from the shot classifier's verdict:
 same one `Route::select` routed on; `BGC`/`FGC` are the dominant background / weighted-median
 foreground colours, each emitted only when sampleable. `=` stands in for the spec's `:` (illegal in
 Windows filenames). `EIX` comes from `shot_classifier::shotcode::eix_bits`; `BGC`/`FGC` are sampled
-once, by `exporter::colors`, from the true-colour `working` copy and the mask. The `run_dir` dev
-harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
+once, by `exporter::colors`, from the true-colour `working` copy and the mask — never from
+`model_input`. The `run_dir` dev harness uses the same two. With no verdict (a failed inference, or the sidecar files not found) there is no mask:
 the name carries `EIX=____` and no segmask is written.
 
 `ShotClassification::mask_too_small` flags a mask that covers too little of the frame to be a
 subject. It is informational for the tag and never overrides `eix` — a tag must never claim an edge
 intersection the pipeline didn't actually route on. It doesn't appear in the filename today;
 `run_dir`'s console output and `zzz_results.json` are where it's currently visible.
+
+The same marker also drives `core::trace`: when it is present, every image writes a per-stage
+trace (`<stem>  -  NN.jpg`, `<stem>  -  log.txt`) into the output image's folder, next to its
+`<stem>_segmask.jpg`. One switch for all debug output, debug and release alike.
 
 ### `core::shot_classifier` — the classifier
 
@@ -147,7 +175,7 @@ Three routes, keyed on the shot classifier's verdict:
 | **R2** `CropSquare` | `mask_too_small`, or left+right bled and nothing else, or all four bled | the largest square already in the frame, centred on the frame |
 | **R3** `Fallback` | no verdict at all | fit the whole image into a square canvas, centred, white fill |
 
-**Three routes, six behaviours.** `docs/csp-spec.md` §5's table is not a competing route list — it is
+**Three routes, six behaviours.** `docs/pproni-spec.md` §5's table is not a competing route list — it is
 the *inside* of these routes. Four of its bleed rows are one rule seen from four angles, and
 `center_and_stretch` applies that rule: a bled edge is pinned, an axis with a free side takes the
 margin, and the slack goes to the free sides. Choosing among them is a behaviour, not a routing
@@ -157,8 +185,7 @@ edges blocked there is no background anywhere to stretch from.
 R3 has no spec row. It is the answer to "we don't know": nothing cropped, nothing scaled, so a wrong
 guess costs framing rather than pixels.
 
-**Status:** all three routes are implemented. Each carries the spec behaviours it owns in its
-module docstring.
+**Status:** all three routes are implemented. Spec behaviours are carried in their own module docstring.
 
 ---
 
@@ -172,7 +199,7 @@ module docstring.
 
 ## 5. Single hardened exe, no install
 
-**CSP ships as one hardened executable with no installation step. This is a hard requirement.**
+**Pproni ships as one hardened executable with no installation step. This is a hard requirement.**
 
 Hardening is already in place in `Cargo.toml`'s release profile — fat LTO, one codegen unit,
 symbols and debuginfo stripped, no PDB, abort on panic — and is anti-RE as much as size. The
@@ -195,13 +222,13 @@ compiled in:
   `<%LOCALAPPDATA%|temp>/pproni-<tag>/pproni.dll` and that path is handed to `ort::init_from`.
   The `<tag>` is the library's size plus a content hash: a rebuilt runtime lands in a fresh
   directory, repeat runs reuse the file already there, and the write is atomic (temp name then
-  rename) so concurrent CSP processes don't corrupt it.
+  rename) so concurrent Pproni processes don't corrupt it.
 
 Both source files are gitignored — the model in `models/`, `onnxruntime.dll` at the repo root — and
 a missing one is a *build* failure naming the file, not a runtime surprise. `models/` is the single
 place any `.onnx` lives; it holds every variant being tried, and only `MODEL_FILE` decides which one
-is baked in. The only files CSP still touches beside the exe are
-optional markers (`CSP_DEBUG_TAGS`) and the `ORT_DYLIB_PATH` override the `examples/` dev harness
+is baked in. The only files Pproni still touches beside the exe are
+optional markers (`PPRONI_DEBUG_TAGS`) and the `ORT_DYLIB_PATH` override the `examples/` dev harness
 uses to point at a hand-placed runtime.
 
 ### Why the runtime is unpacked rather than linked
@@ -253,18 +280,19 @@ What each container now says:
   failure), the desktop folder bootstrap, and `batch::run`'s rayon fan-out with its one level of
   subfolder recursion mirrored into `PPRONI-OUTPUT` and `PPRONI-BACKUP`.
 - **Preprocessor** — decode + EXIF, the unconditional alpha flatten onto white, the sRGB branch,
-  and `Prepared { original, working }`.
+  the optimiser (colour balance, then the trim crop), and `Prepared { original, working, model_input, crop }`.
 - **Shot Classifier** — segmentation, pass-1 `gate`, pass-2 `refine_edge`, the graze test, and the
   `ShotClassification` + `Mask` that leaves for the Processor. The no-verdict `None` is a node of
   its own, because it is not the same thing as an empty edge list.
 - **Processor** — `Route::select`'s two questions and the three routes behind them.
-- **Exporter** — `resize::to_envelope`, the `CSP_DEBUG_TAGS` branch, the JPEG save, and the move of
+- **Exporter** — `resize::to_envelope`, the `PPRONI_DEBUG_TAGS` branch, the JPEG save, and the move of
   the original into `PPRONI-BACKUP` on success.
-- **Dev harness** — `examples/run_dir.rs`, replacing the proposed `CSP-Analyzer` container whose
-  target (`src/bin/csp_analyzer.rs`) was deleted with the classical detector.
+- **Dev harness** — `examples/run_dir.rs`, replacing the proposed `Pproni-Analyzer` container whose
+  target (`src/bin/pproni_analyzer.rs`) was deleted with the classical detector.
 
-Two green bold tags survive from the debug-image protocol, `SEGMASK` and `REFINE`, and they name
-files `run_dir` actually writes (`<stem>_1_segmask.png`, `<stem>_2_refine.png`). The older invented
+Two green bold tags survive from the debug-image protocol, `SEGMASK` and `REFINE`, and `run_dir`
+follows that protocol for the two snapshots it writes: `<stem>___3-class_10_SEGMASK.png` and
+`<stem>___3-class_20_REFINE.png` (naming rules in `docs/diagrams/README.md`). The older invented
 tags went with the detector.
 
 Edits must be made through the draw.io editor (the VS Code **Draw.io Integration** extension), or

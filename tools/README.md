@@ -9,7 +9,7 @@ in `models/`; nothing reads one from anywhere else.
 | `1. run_inference_stages.py` | Dumps one image's four stages (normalised input, raw logits, sigmoid, thresholded) as jpgs. Reads the side from the model; `BIREFNET_ONNX` picks which one. |
 | `2. export_onnx.py` | Exports `ZhengPeng7/BiRefNet_lite` from Hugging Face at a fixed square side. Opset 20, so deformable convs stay a single native `DeformConv`. |
 | `3. quantize_int8.py` | Static int8 quantization, calibrated on the garment set. The settings in it are load-bearing and documented in its docstring. |
-| `4. compare_models.py` | A/B any two exports: throughput under CSP's real concurrency model, plus mask IoU against the first. |
+| `4. compare_models.py` | A/B any two exports: throughput under Pproni's real concurrency model, plus mask IoU against the first. |
 
 ## Rebuilding the shipped model from scratch
 

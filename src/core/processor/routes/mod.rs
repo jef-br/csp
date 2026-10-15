@@ -6,7 +6,7 @@
 //! | R2 [`Route::CropSquare`] | no usable mask, or no room to grow | take the largest square already in the frame |
 //! | R3 [`Route::Fallback`] | no verdict at all | fit the whole image into a square canvas |
 //!
-//! **The bleed table lives inside R1.** `docs/csp-spec.md` §5 lists five behaviours for a subject
+//! **The bleed table lives inside R1.** `docs/pproni-spec.md` §5 lists five behaviours for a subject
 //! that reaches an edge. Four of them are one rule seen from four angles: a bled edge is blocked,
 //! an axis with a free side takes the margin, and the slack goes to the free sides.
 //! [`center_and_stretch`] applies that rule, so those four never reach [`Route::select`] as a
@@ -123,14 +123,16 @@ impl Route {
 
 /// Run the route the verdict selects.
 pub fn dispatch(prep: &Prepared, shot: Option<Shot<'_>>) -> RgbImage {
-    match (Route::select(shot.map(|s| s.class)), shot) {
+    let route = Route::select(shot.map(|s| s.class));
+    let img = match (route, shot) {
         (Route::CenterAndStretch, Some(shot)) => center_and_stretch::apply(prep, shot),
         (Route::CropSquare, Some(shot)) => crop_square::apply(prep, shot),
         // R3, and nothing else can reach here: `select` returns a non-fallback route only for
         // `Some`, so a missing shot always lands on the fallback. R1 and R2 therefore take a
         // plain `Shot` rather than an `Option`, and cannot be handed a state they can't serve.
         _ => fallback::apply(prep),
-    }
+    };
+    img
 }
 
 #[cfg(test)]
@@ -250,6 +252,8 @@ mod tests {
         let prep = Prepared {
             original: RgbImage::new(200, 200),
             working: RgbImage::new(100, 100),
+            model_input: RgbImage::new(100, 100),
+            crop: Rect { x: 0, y: 0, w: 100, h: 100 },
         };
 
         let got = Shot { class: &class, mask: &mask }

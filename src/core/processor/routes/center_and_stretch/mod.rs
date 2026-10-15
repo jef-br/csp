@@ -11,7 +11,7 @@
 //! Everything else follows from that, per axis — an axis with a free side takes the margin, an axis
 //! blocked at both ends takes none, and the slack goes to whichever sides are free.
 //!
-//! That single rule reproduces four of the five bleed behaviours `docs/csp-spec.md` §5 lists
+//! That single rule reproduces four of the five bleed behaviours `docs/pproni-spec.md` §5 lists
 //! separately: flush to one edge, fill an axis bled at both ends, flush into a shared corner, fill
 //! the boxed-in axis. They were never five behaviours — they are one rule seen from four angles,
 //! which is why they live here rather than in five branches of [`super::crop_square`].
@@ -38,6 +38,7 @@ pub mod plan;
 use super::super::super::config;
 use super::super::super::preprocessor::Prepared;
 use super::{fallback, Shot};
+use crate::core::trace;
 use image::RgbImage;
 use plan::{Pins, SquarePlan};
 
@@ -57,12 +58,14 @@ pub fn apply(prep: &Prepared, shot: Shot<'_>) -> RgbImage {
     // An empty mask means the classifier marked nothing: there is no subject to centre on, so the
     // safe framing of R3 is a better answer than a square around an arbitrary point.
     let Some(subject) = shot.subject_bbox_in(prep) else {
+        trace::note(|| "R1: the mask is empty, so there is no subject to centre on: using R3 framing".into());
         return fallback::apply(prep);
     };
     // The edges the subject bleeds off are the ones the square may not move. `None` means no
     // square can respect them all — R3 frames the image safely rather than R1 guessing.
     let pins = Pins::from_edges(&shot.class.touches_edges);
     let Some(plan) = SquarePlan::new(subject, config::R1_MARGIN, pins) else {
+        trace::note(|| format!("R1: no square can respect the bled edges {pins:?}: using R3 framing"));
         return fallback::apply(prep);
     };
     compose::compose(&prep.original, &plan, subject, safety_px(prep))
@@ -88,7 +91,7 @@ mod tests {
     }
 
     fn run(img: RgbImage, mask: &Mask) -> RgbImage {
-        let prep = Prepared { original: img.clone(), working: img };
+        let prep = Prepared { original: img.clone(), working: img.clone(), model_input: img.clone(), crop: Rect { x: 0, y: 0, w: img.width(), h: img.height() } };
         let class = ShotClassification::default();
         apply(&prep, Shot { class: &class, mask })
     }
@@ -100,7 +103,7 @@ mod tests {
         let out = run(img, &mask);
 
         assert_eq!(out.width(), out.height());
-        assert_eq!(out.width(), 94, "90 * 1.042 = 93.8");
+        assert_eq!(out.width(), 98, "90 * 1.084 = 97.56");
         // Centre of the output is subject, and the corners are background.
         assert_eq!(*out.get_pixel(47, 47), Rgb([10, 10, 10]));
         assert_eq!(*out.get_pixel(1, 1), Rgb([200, 200, 200]));
@@ -113,7 +116,7 @@ mod tests {
         // exactly its own value, and the subject band is copied untouched.
         let (img, mask) = scene(400, 400, Rect { x: 150, y: 150, w: 100, h: 100 }, [240, 240, 240], [0, 0, 0]);
         let out = run(img, &mask);
-        assert_eq!(out.dimensions(), (104, 104));
+        assert_eq!(out.dimensions(), (108, 108));
         assert_eq!(*out.get_pixel(52, 52), Rgb([0, 0, 0]));
         assert_eq!(*out.get_pixel(0, 0), Rgb([240, 240, 240]));
     }
@@ -125,7 +128,7 @@ mod tests {
         // two-pass order fills them, since they are outside the image on both axes.
         let (img, mask) = scene(200, 100, Rect { x: 40, y: 20, w: 120, h: 60 }, [180, 190, 200], [30, 40, 50]);
         let out = run(img, &mask);
-        assert_eq!(out.dimensions(), (125, 125));
+        assert_eq!(out.dimensions(), (130, 130));
         assert_eq!(*out.get_pixel(2, 2), Rgb([180, 190, 200]), "top-left corner");
         assert_eq!(*out.get_pixel(122, 122), Rgb([180, 190, 200]), "bottom-right corner");
         assert_eq!(*out.get_pixel(62, 62), Rgb([30, 40, 50]), "centre is still subject");
@@ -151,14 +154,14 @@ mod tests {
             }
         }
         let out = run(img, &mask);
-        assert_eq!(out.dimensions(), (208, 208), "200 * 1.042 = 208.4");
+        assert_eq!(out.dimensions(), (217, 217), "200 * 1.084 = 216.8");
 
         // Left band: source columns 0..12 (subject at 20, safety 8) stretched over output
-        // columns 0..56. Both ends pinned, and no reversal in between.
+        // columns 0..61. Both ends pinned, and no reversal in between.
         let row = out.height() / 2;
-        let band: Vec<u8> = (0..56).map(|x| out.get_pixel(x, row)[0]).collect();
+        let band: Vec<u8> = (0..61).map(|x| out.get_pixel(x, row)[0]).collect();
         assert_eq!(band[0], 0, "outer end is pinned to the image's own border pixel");
-        assert_eq!(band[55], 23, "inner end meets column 11 of the source, value 23");
+        assert_eq!(band[60], 23, "inner end meets column 11 of the source, value 23");
         assert!(
             band.windows(2).all(|w| w[0] <= w[1]),
             "a stretched gradient must stay monotonic, got {band:?}"

@@ -15,7 +15,7 @@
 //! 4. Classify each unknown pixel by color distance to sampled FGC vs. BGC, at full res.
 //! 5. The refined mask, not the raw BiRefNet mask, says whether the boundary reaches the border at all.
 //! 6. A contact that reaches the border still has to earn the verdict:
-//!    [`is_graze`] rejects the ones where the silhouette runs along the edge rather than off it.
+//!    [`graze_ratio`] rejects the ones where the silhouette runs along the edge rather than off it.
 
 use super::geometry::{Edge, EdgeView, Grid, Rect};
 use super::sampling::{sample_background_color, ColorStats};
@@ -70,6 +70,10 @@ pub struct EdgeRefinement {
     /// The region refinement worked in, in original-image coordinates.
     /// Not used in `touching`; exposed for callers that export or visualize the refined area.
     pub crop_region: Rect,
+    /// Narrow/wide coverage ratio from [`graze_ratio`]; `None` when the mask never reaches the
+    /// band or the measurement is degenerate (so no touching decision was made from a ratio).
+    /// Below [`RefineParams::graze_ratio_max`] counts as a graze.
+    pub coverage: Option<f32>,
 }
 
 pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) -> EdgeRefinement {
@@ -100,6 +104,7 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
             edge,
             touching: false,
             crop_region: Rect { x: 0, y: 0, w: 0, h: 0 },
+            coverage: None,
         };
     };
 
@@ -151,10 +156,11 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
     // subject the frame cuts in half, and only the second one gives R2 an
     // edge to anchor a crop against.
     let narrow_px_full = ((params.narrow_band_px as f32) * scale).round().max(1.0) as u32;
-    let touching = reaches_border
-        && !is_graze(&refined, edge, band_px_full, narrow_px_full, params.graze_ratio_max);
+    let coverage = graze_ratio(&refined, edge, band_px_full, narrow_px_full);
+    let is_graze = coverage.is_some_and(|r| r < params.graze_ratio_max);
+    let touching = reaches_border && !is_graze;
 
-    EdgeRefinement { edge, touching, crop_region: original_roi }
+    EdgeRefinement { edge, touching, crop_region: original_roi, coverage }
 }
 
 /// Does the subject merely graze this edge rather than bleed off it?
@@ -176,14 +182,14 @@ pub fn refine_edge(input: &RefinementInput, edge: Edge, params: RefineParams) ->
 /// The ratio does not care how wide a column range it is taken over - the
 /// width cancels - so the crop spanning only the contact region rather
 /// than the whole edge leaves it unchanged.
-fn is_graze(mask: &Mask, edge: Edge, wide_px: u32, narrow_px: u32, ratio_max: f32) -> bool {
+fn graze_ratio(mask: &Mask, edge: Edge, wide_px: u32, narrow_px: u32) -> Option<f32> {
     let view = EdgeView::new(mask, edge);
     let wide = wide_px.min(view.height());
     let narrow = narrow_px.min(wide);
-    // Degenerate bands can't express a ratio; say "not a graze" so the
+    // Degenerate bands can't express a ratio; the caller treats `None` as "not a graze" so the
     // border contact stands on its own, as it did before this test.
     if narrow == 0 || narrow == wide {
-        return false;
+        return None;
     }
 
     let per_row: Vec<f32> = (0..wide)
@@ -193,9 +199,9 @@ fn is_graze(mask: &Mask, edge: Edge, wide_px: u32, narrow_px: u32, ratio_max: f3
 
     let wide_mean = mean(&per_row);
     if wide_mean <= 0.0 {
-        return false;
+        return None;
     }
-    mean(&per_row[..narrow as usize]) / wide_mean < ratio_max
+    Some(mean(&per_row[..narrow as usize]) / wide_mean)
 }
 
 fn crop_image(image: &RgbImage, rect: Rect) -> RgbImage {
