@@ -27,8 +27,8 @@ const MODEL_DIR: &str = "models";
 /// only thing that decides which one ships. To switch, move the `//` — exactly
 /// one of these lines must be live, and leaving both live is a build error
 /// (E0428, `MODEL_FILE` defined twice) rather than a silent wrong model.
-const MODEL_FILE: &str = "birefnet_lite_384_int8.onnx"; // JB: Homemade optimized-for-speed model. Untested performance.
-// const MODEL_FILE: &str = "birefnet_lite_512.onnx"; // JB: Proven to work. Slower & bigger.
+// const MODEL_FILE: &str = "birefnet_lite_384_int8.onnx"; // JB: Homemade optimized-for-speed model. Untested performance.
+const MODEL_FILE: &str = "birefnet_lite_512.onnx"; // JB: Proven to work. Slower & bigger.
 
 fn main() {
     #[cfg(windows)]
